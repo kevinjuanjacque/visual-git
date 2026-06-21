@@ -1,0 +1,560 @@
+import { useState, useEffect, useCallback } from 'react'
+import { formatDate } from '../utils/time'
+
+/**
+ * Panel derecho dual-mode:
+ *  - Modo A: Commit histórico → metadata + archivos modificados + diff
+ *  - Modo B: Nodo WIP → Staged / Unstaged con staging granular + formulario de commit
+ */
+export default function CommitDetail({
+  commit, repoPath,
+  staged, unstaged, untracked,
+  conflictedFiles = [],
+  onStageFiles, onUnstageFiles, onCommit, onRefreshStatus
+}) {
+
+  // ── Modo WIP ──────────────────────────────────────────────────────────────
+  if (commit?.isWip) {
+    return (
+      <WipPanel
+        repoPath={repoPath}
+        staged={staged}
+        unstaged={unstaged}
+        untracked={untracked}
+        conflictedFiles={conflictedFiles}
+        onStageFiles={onStageFiles}
+        onUnstageFiles={onUnstageFiles}
+        onCommit={onCommit}
+        onRefreshStatus={onRefreshStatus}
+      />
+    )
+  }
+
+  // ── Placeholder ───────────────────────────────────────────────────────────
+  if (!commit) {
+    return (
+      <div className="w-80 shrink-0 flex items-center justify-center h-full bg-surface-850 border-l border-surface-700/60 text-[11px] text-slate-600">
+        Selecciona un commit
+      </div>
+    )
+  }
+
+  // ── Modo histórico ────────────────────────────────────────────────────────
+  return <HistoricPanel commit={commit} repoPath={repoPath} />
+}
+
+// ── Historic Commit Panel ────────────────────────────────────────────────────
+
+function HistoricPanel({ commit, repoPath }) {
+  const [detail,  setDetail]  = useState(null)
+  const [loading, setLoading] = useState(false)
+  const [tab,     setTab]     = useState('info')    // 'info' | 'diff'
+  const [selectedFile, setSelectedFile] = useState(null)
+  const [fileDiff, setFileDiff] = useState(null)
+  const [loadingDiff, setLoadingDiff] = useState(false)
+
+  useEffect(() => {
+    if (!commit || !repoPath) { setDetail(null); return }
+    setLoading(true)
+    setDetail(null)
+    setSelectedFile(null)
+    setFileDiff(null)
+    window.electronAPI
+      .getCommitDetail({ folderPath: repoPath, hash: commit.hash })
+      .then(d => setDetail(d))
+      .catch(e => setDetail({ error: e.message }))
+      .finally(() => setLoading(false))
+  }, [commit?.hash, repoPath])
+
+  async function handleFileClick(file) {
+    if (selectedFile === file) { setSelectedFile(null); setFileDiff(null); return }
+    setSelectedFile(file)
+    setLoadingDiff(true)
+    try {
+      // Use git show for a specific file in a commit
+      const res = await window.electronAPI.getFileDiff({
+        folderPath: repoPath,
+        file,
+        cached: false,
+        commitHash: commit.hash
+      })
+      setFileDiff(res.diff || '')
+    } catch { setFileDiff('') }
+    finally { setLoadingDiff(false) }
+  }
+
+  return (
+    <aside className="w-80 shrink-0 flex flex-col bg-surface-850 border-l border-surface-700/60 overflow-hidden">
+      {/* Header */}
+      <div className="px-4 py-3 border-b border-surface-700/60 shrink-0">
+        <div className="flex items-center gap-2 mb-2">
+          <code className="text-brand-400 text-[11px] font-mono bg-surface-900 px-2 py-0.5 rounded">
+            {commit.shortHash}
+          </code>
+          {commit.isHead && (
+            <span className="text-[10px] bg-emerald-500/15 text-emerald-400 px-1.5 py-0.5 rounded-sm font-medium ring-1 ring-emerald-500/25">
+              HEAD
+            </span>
+          )}
+        </div>
+        <p className="text-[13px] text-white font-medium leading-snug break-words">{commit.subject}</p>
+        <div className="flex items-center gap-2 mt-2">
+          <div className="w-5 h-5 rounded-full bg-brand-500/20 flex items-center justify-center text-[10px] text-brand-400 font-bold shrink-0">
+            {commit.authorName?.[0]?.toUpperCase()}
+          </div>
+          <span className="text-[11px] text-slate-400">{commit.authorName}</span>
+          <span className="text-[11px] text-slate-600 ml-auto">{formatDate(commit.date)}</span>
+        </div>
+      </div>
+
+      {/* Branch/tag badges */}
+      {(commit.branches?.length > 0 || commit.tags?.length > 0) && (
+        <div className="px-4 py-2 border-b border-surface-700/60 flex flex-wrap gap-1.5 shrink-0">
+          {commit.branches?.map(b => {
+            const isHead   = commit.isHead && !b.startsWith('remotes/')
+            const isRemote = b.startsWith('remotes/') || b.startsWith('origin/')
+            const label    = b.replace('remotes/', '').replace('origin/', '')
+            return (
+              <span key={b} className={`inline-flex items-center gap-0.5 text-[10px] font-mono px-2 py-0.5 rounded-sm ${
+                isHead ? 'bg-emerald-500/15 text-emerald-400 ring-1 ring-emerald-500/25'
+                : isRemote ? 'bg-surface-700 text-slate-500'
+                : 'bg-brand-500/15 text-brand-400 ring-1 ring-brand-500/25'
+              }`}>
+                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="shrink-0">
+                  <line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 01-9 9"/>
+                </svg>
+                {label}
+              </span>
+            )
+          })}
+          {commit.tags?.map(tag => (
+            <span key={tag} className="inline-flex items-center gap-0.5 text-[10px] font-mono px-2 py-0.5 rounded-sm bg-amber-500/15 text-amber-400 ring-1 ring-amber-500/25">
+              <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="shrink-0">
+                <path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/>
+              </svg>
+              {tag}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Parents */}
+      {commit.parents?.length > 0 && (
+        <div className="px-4 py-2 border-b border-surface-700/60 shrink-0">
+          <span className="text-[11px] text-slate-500">
+            Padre{commit.parents.length > 1 ? 's' : ''}:{' '}
+            {commit.parents.map(p => (
+              <code key={p} className="font-mono text-slate-400 text-[11px] ml-1">{p.substring(0, 7)}</code>
+            ))}
+          </span>
+        </div>
+      )}
+
+      {/* Tabs */}
+      <div className="flex border-b border-surface-700/60 shrink-0">
+        {['info', 'diff'].map(t => (
+          <button key={t} onClick={() => { setTab(t); if (t === 'info') { setSelectedFile(null); setFileDiff(null) } }}
+            className={`flex-1 py-2 text-[11px] font-medium transition-colors ${
+              tab === t ? 'text-brand-400 border-b-2 border-brand-500' : 'text-slate-500 hover:text-slate-300'
+            }`}>
+            {t === 'info' ? 'Archivos' : 'Diff'}
+          </button>
+        ))}
+      </div>
+
+      {/* Content */}
+      <div className="flex-1 overflow-y-auto text-[11px] font-mono">
+        {loading && (
+          <div className="flex items-center justify-center h-16 text-slate-500 gap-2">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="animate-spin"><path d="M21 12a9 9 0 11-6.219-8.56"/></svg>
+            Cargando...
+          </div>
+        )}
+        {detail?.error && <p className="p-4 text-red-400">{detail.error}</p>}
+
+        {detail && !detail.error && tab === 'info' && (
+          <FileStatClickable raw={detail.show} onFileClick={handleFileClick} selectedFile={selectedFile} />
+        )}
+
+        {detail && !detail.error && tab === 'diff' && (
+          <DiffView raw={detail.diff} />
+        )}
+
+        {/* Inline diff when file clicked in info tab */}
+        {selectedFile && fileDiff !== null && tab === 'info' && (
+          <div className="border-t border-surface-700/60">
+            {loadingDiff
+              ? <div className="flex items-center justify-center h-12 text-slate-500 gap-2">
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="animate-spin"><path d="M21 12a9 9 0 11-6.219-8.56"/></svg>
+                </div>
+              : <DiffView raw={fileDiff} />
+            }
+          </div>
+        )}
+      </div>
+    </aside>
+  )
+}
+
+// ── WIP Staging Panel ────────────────────────────────────────────────────────
+
+function WipPanel({ repoPath, staged, unstaged, untracked, conflictedFiles = [], onStageFiles, onUnstageFiles, onCommit, onRefreshStatus }) {
+  const [summary,     setSummary]     = useState('')
+  const [description, setDescription] = useState('')
+  const [committing,  setCommitting]  = useState(false)
+  const [selectedFile, setSelectedFile] = useState(null)
+  const [fileDiff,    setFileDiff]    = useState(null)
+  const [loadingDiff, setLoadingDiff] = useState(false)
+  const [selectedFiles, setSelectedFiles] = useState(new Set()) // multi-select
+
+  const allUnstaged = [...unstaged, ...untracked]
+
+  async function loadFileDiff(file, isCached) {
+    if (selectedFile?.path === file.path && selectedFile?.cached === isCached) {
+      setSelectedFile(null); setFileDiff(null); return
+    }
+    setSelectedFile({ ...file, cached: isCached })
+    setLoadingDiff(true)
+    try {
+      const res = await window.electronAPI.getFileDiff({ folderPath: repoPath, file: file.path, cached: isCached })
+      setFileDiff(res.diff || '')
+    } catch { setFileDiff('') }
+    finally { setLoadingDiff(false) }
+  }
+
+  function toggleFileSelect(path, e) {
+    setSelectedFiles(prev => {
+      const next = new Set(prev)
+      if (e.shiftKey || e.metaKey || e.ctrlKey) {
+        if (next.has(path)) next.delete(path)
+        else next.add(path)
+      } else {
+        next.clear()
+        if (!prev.has(path) || prev.size > 1) next.add(path)
+      }
+      return next
+    })
+  }
+
+  async function handleCommit() {
+    if (!summary.trim() || staged.length === 0) return
+    setCommitting(true)
+    await onCommit?.(summary.trim(), description.trim())
+    setSummary('')
+    setDescription('')
+    setCommitting(false)
+  }
+
+  return (
+    <aside className="w-80 shrink-0 flex flex-col bg-surface-850 border-l border-surface-700/60 overflow-hidden">
+      {/* WIP Header */}
+      <div className="px-4 py-3 border-b border-surface-700/60 shrink-0 flex items-center gap-2">
+        <div className="w-7 h-7 rounded-md bg-slate-700/60 border border-slate-600 flex items-center justify-center">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="2">
+            <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
+            <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
+          </svg>
+        </div>
+        <div>
+          <div className="text-[13px] text-white font-semibold">// WIP</div>
+          <div className="text-[10px] text-slate-500">
+            {staged.length} staged · {allUnstaged.length} sin stagear
+          </div>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto flex flex-col">
+
+        {/* ── Conflicted Files (only shown when there's a merge/rebase conflict) ── */}
+        {conflictedFiles.length > 0 && (
+          <div className="shrink-0 border-b border-red-700/30 bg-red-950/20">
+            <div className="flex items-center justify-between px-3 pt-2.5 pb-1">
+              <span className="text-[10px] font-semibold text-red-400 uppercase tracking-wider flex items-center gap-1.5">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#f87171" strokeWidth="2.5">
+                  <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+                  <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+                </svg>
+                Conflictos ({conflictedFiles.length})
+              </span>
+            </div>
+            <ul className="px-1.5 pb-2 space-y-0.5">
+              {conflictedFiles.map(f => (
+                <li key={f} className="flex items-center gap-2 px-2 py-1 rounded text-[11px] font-mono text-red-400 bg-red-500/10 border border-red-500/20">
+                  <span className="font-bold text-[12px]">!</span>
+                  <span className="truncate flex-1">{f}</span>
+                  <span className="text-[9px] text-red-600 shrink-0">conflict</span>
+                </li>
+              ))}
+            </ul>
+            <p className="px-3 pb-2.5 text-[10px] text-red-600/80 italic">
+              Resolvé los conflictos y luego stagea los archivos para continuar.
+            </p>
+          </div>
+        )}
+
+        {/* ── Unstaged Files ── */}
+        <div className="shrink-0">
+          <div className="flex items-center justify-between px-3 pt-2.5 pb-1">
+            <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">
+              Sin Stagear ({allUnstaged.length})
+            </span>
+            {allUnstaged.length > 0 && (
+              <button
+                onClick={() => onStageFiles?.(allUnstaged.map(f => f.path))}
+                className="text-[10px] text-brand-400 hover:text-brand-300 font-medium transition-colors"
+              >
+                Stage All
+              </button>
+            )}
+          </div>
+          {allUnstaged.length === 0 ? (
+            <p className="px-3 py-2 text-[11px] text-slate-700">Sin cambios</p>
+          ) : (
+            <ul className="px-1.5 pb-1 space-y-0.5">
+              {allUnstaged.map(file => (
+                <FileRow
+                  key={file.path}
+                  file={file}
+                  isSelected={selectedFiles.has(file.path)}
+                  isExpanded={selectedFile?.path === file.path && !selectedFile?.cached}
+                  onRowClick={(e) => { toggleFileSelect(file.path, e); loadFileDiff(file, false) }}
+                  onStage={() => onStageFiles?.([file.path])}
+                  onDiscard={() => handleDiscard(file.path)}
+                  mode="unstaged"
+                />
+              ))}
+            </ul>
+          )}
+        </div>
+
+        {/* ── Staged Files ── */}
+        <div className="shrink-0 border-t border-surface-700/60">
+          <div className="flex items-center justify-between px-3 pt-2.5 pb-1">
+            <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">
+              Staged ({staged.length})
+            </span>
+            {staged.length > 0 && (
+              <button
+                onClick={() => onUnstageFiles?.(staged.map(f => f.path))}
+                className="text-[10px] text-slate-400 hover:text-slate-300 font-medium transition-colors"
+              >
+                Unstage All
+              </button>
+            )}
+          </div>
+          {staged.length === 0 ? (
+            <p className="px-3 py-2 text-[11px] text-slate-700">Nada staged aún</p>
+          ) : (
+            <ul className="px-1.5 pb-1 space-y-0.5">
+              {staged.map(file => (
+                <FileRow
+                  key={file.path}
+                  file={file}
+                  isSelected={selectedFiles.has(file.path)}
+                  isExpanded={selectedFile?.path === file.path && selectedFile?.cached}
+                  onRowClick={(e) => { toggleFileSelect(file.path, e); loadFileDiff(file, true) }}
+                  onUnstage={() => onUnstageFiles?.([file.path])}
+                  mode="staged"
+                />
+              ))}
+            </ul>
+          )}
+        </div>
+
+        {/* Inline diff view */}
+        {selectedFile && (
+          <div className="border-t border-surface-700/60 shrink-0">
+            <div className="px-3 py-1.5 text-[10px] text-slate-500 font-mono truncate bg-surface-900/50">
+              {selectedFile.path}
+            </div>
+            {loadingDiff
+              ? <div className="flex justify-center py-4"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#6b7280" strokeWidth="2" className="animate-spin"><path d="M21 12a9 9 0 11-6.219-8.56"/></svg></div>
+              : <DiffView raw={fileDiff} maxLines={80} />
+            }
+          </div>
+        )}
+
+        {/* ── Commit Form ── */}
+        <div className="mt-auto border-t border-surface-700/60 p-3 shrink-0">
+          <input
+            value={summary}
+            onChange={e => setSummary(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) handleCommit() }}
+            placeholder="Resumen del commit (requerido)"
+            className="w-full bg-surface-900 border border-surface-600 rounded-md px-3 py-2 text-[12px] text-slate-200 placeholder-slate-600 focus:outline-none focus:border-brand-500 transition-colors mb-2"
+          />
+          <textarea
+            value={description}
+            onChange={e => setDescription(e.target.value)}
+            placeholder="Descripción (opcional)"
+            rows={2}
+            className="w-full bg-surface-900 border border-surface-600 rounded-md px-3 py-2 text-[12px] text-slate-200 placeholder-slate-600 focus:outline-none focus:border-brand-500 transition-colors mb-2 resize-none"
+          />
+          <button
+            onClick={handleCommit}
+            disabled={!summary.trim() || staged.length === 0 || committing || conflictedFiles.length > 0}
+            className="w-full py-2 text-sm font-semibold rounded-lg transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed
+              bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white shadow-lg shadow-emerald-900/30"
+          >
+            {committing
+              ? <span className="flex items-center justify-center gap-2">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="animate-spin"><path d="M21 12a9 9 0 11-6.219-8.56"/></svg>
+                  Commiteando...
+                </span>
+              : `Commit Changes (${staged.length} archivo${staged.length !== 1 ? 's' : ''})`
+            }
+          </button>
+          {conflictedFiles.length > 0 && (
+            <p className="text-[10px] text-red-500 text-center mt-1.5">⚠️ Resolvé los {conflictedFiles.length} conflicto{conflictedFiles.length !== 1 ? 's' : ''} antes de commitear</p>
+          )}
+          {staged.length === 0 && conflictedFiles.length === 0 && (
+            <p className="text-[10px] text-slate-600 text-center mt-1.5">Stagea al menos un archivo para commitear</p>
+          )}
+        </div>
+      </div>
+    </aside>
+  )
+
+  async function handleDiscard(filePath) {
+    if (!window.confirm(`¿Descarta los cambios en "${filePath}"? Esta acción no se puede deshacer.`)) return
+    try {
+      await window.electronAPI.checkout({ folderPath: repoPath, branch: `-- ${filePath}` })
+      onRefreshStatus?.()
+    } catch { /* ignore */ }
+  }
+}
+
+// ── FileRow ──────────────────────────────────────────────────────────────────
+
+function FileRow({ file, isSelected, isExpanded, onRowClick, onStage, onUnstage, onDiscard, mode }) {
+  const kindColor = {
+    modified:  'text-amber-400',
+    added:     'text-emerald-400',
+    deleted:   'text-red-400',
+    untracked: 'text-blue-400',
+  }[file.kind] || 'text-slate-400'
+
+  const kindLetter = { modified: 'M', added: 'A', deleted: 'D', untracked: '?' }[file.kind] || '·'
+
+  return (
+    <li>
+      <div
+        onClick={onRowClick}
+        className={`group flex items-center gap-2 px-2 py-1 rounded text-[11px] cursor-pointer transition-colors select-none ${
+          isSelected || isExpanded
+            ? 'bg-brand-500/15 text-slate-200'
+            : 'hover:bg-surface-700 text-slate-400'
+        }`}
+      >
+        <span className={`shrink-0 font-bold font-mono text-[10px] w-3 ${kindColor}`}>{kindLetter}</span>
+        <span className="truncate flex-1 font-mono">{file.path.split('/').pop()}</span>
+        <span className="text-[9px] text-slate-700 truncate hidden group-hover:block max-w-[80px]">
+          {file.path}
+        </span>
+
+        {/* Hover action buttons */}
+        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+          {mode === 'unstaged' && (
+            <>
+              <button
+                onClick={e => { e.stopPropagation(); onStage?.() }}
+                title="Stage file"
+                className="w-5 h-5 rounded bg-brand-500/25 text-brand-400 hover:bg-brand-500/50 flex items-center justify-center font-bold text-[10px]"
+              >S</button>
+              {onDiscard && (
+                <button
+                  onClick={e => { e.stopPropagation(); onDiscard?.() }}
+                  title="Descartar cambios"
+                  className="w-5 h-5 rounded bg-red-500/15 text-red-400 hover:bg-red-500/30 flex items-center justify-center"
+                >
+                  <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a1 1 0 011-1h4a1 1 0 011 1v2"/>
+                  </svg>
+                </button>
+              )}
+            </>
+          )}
+          {mode === 'staged' && (
+            <button
+              onClick={e => { e.stopPropagation(); onUnstage?.() }}
+              title="Unstage file"
+              className="w-5 h-5 rounded bg-slate-500/25 text-slate-400 hover:bg-slate-500/50 flex items-center justify-center font-bold text-[10px]"
+            >U</button>
+          )}
+        </div>
+      </div>
+    </li>
+  )
+}
+
+// ── File Stats (clickable) ────────────────────────────────────────────────────
+
+function FileStatClickable({ raw, onFileClick, selectedFile }) {
+  if (!raw) return null
+  const lines = raw.split('\n')
+  const statLines = lines.filter(l => l.includes('|') || l.match(/\d+ file/))
+
+  return (
+    <div className="p-3 space-y-0.5">
+      {statLines.map((line, i) => {
+        const isSum = line.match(/\d+ file/)
+        if (isSum) return (
+          <p key={i} className="text-slate-400 pt-1 border-t border-surface-700/60 mt-1">{line.trim()}</p>
+        )
+        const [file, stat] = line.split('|')
+        if (!stat) return <p key={i} className="text-slate-500">{line}</p>
+        const adds = (stat.match(/\+/g) || []).length
+        const dels = (stat.match(/-/g) || []).length
+        const filePath = file?.trim()
+        const isSelected = selectedFile === filePath
+
+        return (
+          <div
+            key={i}
+            onClick={() => onFileClick?.(filePath)}
+            className={`flex items-center gap-2 px-1.5 py-0.5 rounded cursor-pointer transition-colors ${
+              isSelected ? 'bg-brand-500/15' : 'hover:bg-surface-700/60'
+            }`}
+          >
+            <span className="text-slate-400 truncate flex-1">{filePath}</span>
+            <span className="text-emerald-400 shrink-0">+{adds}</span>
+            <span className="text-red-400 shrink-0">-{dels}</span>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+// ── Diff view ─────────────────────────────────────────────────────────────────
+
+function DiffView({ raw, maxLines }) {
+  if (!raw) return null
+  let lines = raw.split('\n')
+  const truncated = maxLines && lines.length > maxLines
+  if (truncated) lines = lines.slice(0, maxLines)
+
+  return (
+    <div className="p-0 font-mono text-[11px]">
+      {lines.map((line, i) => {
+        let cls = 'text-slate-500'
+        if (line.startsWith('+++') || line.startsWith('---')) cls = 'text-slate-400 font-medium'
+        else if (line.startsWith('+')) cls = 'text-emerald-400 bg-emerald-900/15'
+        else if (line.startsWith('-')) cls = 'text-red-400 bg-red-900/15'
+        else if (line.startsWith('@@'))   cls = 'text-brand-400 bg-brand-500/5'
+        else if (line.startsWith('diff ')) cls = 'text-brand-400 font-medium bg-surface-800 py-1'
+
+        return (
+          <div key={i} className={`px-3 py-0 leading-5 whitespace-pre-wrap break-all ${cls}`}>
+            {line || ' '}
+          </div>
+        )
+      })}
+      {truncated && (
+        <div className="px-3 py-2 text-[10px] text-slate-600 italic">
+          … {raw.split('\n').length - maxLines} líneas más (abre la pestaña Diff para ver todo)
+        </div>
+      )}
+    </div>
+  )
+}
