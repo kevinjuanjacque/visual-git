@@ -10,7 +10,8 @@ export default function CommitDetail({
   commit, repoPath,
   staged, unstaged, untracked,
   conflictedFiles = [],
-  onStageFiles, onUnstageFiles, onCommit, onRefreshStatus
+  onStageFiles, onUnstageFiles, onCommit, onRefreshStatus,
+  onFileClick
 }) {
 
   // ── Modo WIP ──────────────────────────────────────────────────────────────
@@ -26,6 +27,7 @@ export default function CommitDetail({
         onUnstageFiles={onUnstageFiles}
         onCommit={onCommit}
         onRefreshStatus={onRefreshStatus}
+        onFileClick={onFileClick}
       />
     )
   }
@@ -40,12 +42,12 @@ export default function CommitDetail({
   }
 
   // ── Modo histórico ────────────────────────────────────────────────────────
-  return <HistoricPanel commit={commit} repoPath={repoPath} />
+  return <HistoricPanel commit={commit} repoPath={repoPath} onFileClick={onFileClick} />
 }
 
 // ── Historic Commit Panel ────────────────────────────────────────────────────
 
-function HistoricPanel({ commit, repoPath }) {
+function HistoricPanel({ commit, repoPath, onFileClick }) {
   const [detail,  setDetail]  = useState(null)
   const [loading, setLoading] = useState(false)
   const [tab,     setTab]     = useState('info')    // 'info' | 'diff'
@@ -66,21 +68,14 @@ function HistoricPanel({ commit, repoPath }) {
       .finally(() => setLoading(false))
   }, [commit?.hash, repoPath])
 
-  async function handleFileClick(file) {
-    if (selectedFile === file) { setSelectedFile(null); setFileDiff(null); return }
-    setSelectedFile(file)
-    setLoadingDiff(true)
-    try {
-      // Use git show for a specific file in a commit
-      const res = await window.electronAPI.getFileDiff({
-        folderPath: repoPath,
-        file,
-        cached: false,
-        commitHash: commit.hash
-      })
-      setFileDiff(res.diff || '')
-    } catch { setFileDiff('') }
-    finally { setLoadingDiff(false) }
+  function handleFileClick(fileObj) {
+    if (selectedFile === fileObj.file) { 
+      setSelectedFile(null)
+      onFileClick?.(null)
+      return 
+    }
+    setSelectedFile(fileObj.file)
+    onFileClick?.({ file: fileObj.file, commitHash: commit.hash })
   }
 
   return (
@@ -173,23 +168,11 @@ function HistoricPanel({ commit, repoPath }) {
         {detail?.error && <p className="p-4 text-red-400">{detail.error}</p>}
 
         {detail && !detail.error && tab === 'info' && (
-          <FileStatClickable raw={detail.show} onFileClick={handleFileClick} selectedFile={selectedFile} />
+          <FileStatClickable files={detail.files} onFileClick={handleFileClick} selectedFile={selectedFile} />
         )}
 
         {detail && !detail.error && tab === 'diff' && (
           <DiffView raw={detail.diff} />
-        )}
-
-        {/* Inline diff when file clicked in info tab */}
-        {selectedFile && fileDiff !== null && tab === 'info' && (
-          <div className="border-t border-surface-700/60">
-            {loadingDiff
-              ? <div className="flex items-center justify-center h-12 text-slate-500 gap-2">
-                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="animate-spin"><path d="M21 12a9 9 0 11-6.219-8.56"/></svg>
-                </div>
-              : <DiffView raw={fileDiff} />
-            }
-          </div>
         )}
       </div>
     </aside>
@@ -198,28 +181,23 @@ function HistoricPanel({ commit, repoPath }) {
 
 // ── WIP Staging Panel ────────────────────────────────────────────────────────
 
-function WipPanel({ repoPath, staged, unstaged, untracked, conflictedFiles = [], onStageFiles, onUnstageFiles, onCommit, onRefreshStatus }) {
+function WipPanel({ repoPath, staged, unstaged, untracked, conflictedFiles = [], onStageFiles, onUnstageFiles, onCommit, onRefreshStatus, onFileClick }) {
   const [summary,     setSummary]     = useState('')
   const [description, setDescription] = useState('')
   const [committing,  setCommitting]  = useState(false)
   const [selectedFile, setSelectedFile] = useState(null)
-  const [fileDiff,    setFileDiff]    = useState(null)
-  const [loadingDiff, setLoadingDiff] = useState(false)
   const [selectedFiles, setSelectedFiles] = useState(new Set()) // multi-select
 
   const allUnstaged = [...unstaged, ...untracked]
 
   async function loadFileDiff(file, isCached) {
     if (selectedFile?.path === file.path && selectedFile?.cached === isCached) {
-      setSelectedFile(null); setFileDiff(null); return
+      setSelectedFile(null)
+      onFileClick?.(null)
+      return
     }
     setSelectedFile({ ...file, cached: isCached })
-    setLoadingDiff(true)
-    try {
-      const res = await window.electronAPI.getFileDiff({ folderPath: repoPath, file: file.path, cached: isCached })
-      setFileDiff(res.diff || '')
-    } catch { setFileDiff('') }
-    finally { setLoadingDiff(false) }
+    onFileClick?.({ file: file.path, isWip: true, cached: isCached })
   }
 
   function toggleFileSelect(path, e) {
@@ -361,19 +339,6 @@ function WipPanel({ repoPath, staged, unstaged, untracked, conflictedFiles = [],
           )}
         </div>
 
-        {/* Inline diff view */}
-        {selectedFile && (
-          <div className="border-t border-surface-700/60 shrink-0">
-            <div className="px-3 py-1.5 text-[10px] text-slate-500 font-mono truncate bg-surface-900/50">
-              {selectedFile.path}
-            </div>
-            {loadingDiff
-              ? <div className="flex justify-center py-4"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#6b7280" strokeWidth="2" className="animate-spin"><path d="M21 12a9 9 0 11-6.219-8.56"/></svg></div>
-              : <DiffView raw={fileDiff} maxLines={80} />
-            }
-          </div>
-        )}
-
         {/* ── Commit Form ── */}
         <div className="mt-auto border-t border-surface-700/60 p-3 shrink-0">
           <input
@@ -489,39 +454,160 @@ function FileRow({ file, isSelected, isExpanded, onRowClick, onStage, onUnstage,
 
 // ── File Stats (clickable) ────────────────────────────────────────────────────
 
-function FileStatClickable({ raw, onFileClick, selectedFile }) {
-  if (!raw) return null
-  const lines = raw.split('\n')
-  const statLines = lines.filter(l => l.includes('|') || l.match(/\d+ file/))
+function FileStatClickable({ files, onFileClick, selectedFile }) {
+  const [viewMode, setViewMode] = useState('path') // 'path' or 'tree'
+
+  if (!files || files.length === 0) return null
+
+  // A=Added, D=Deleted, M=Modified
+  function getIcon(status) {
+    if (status === 'A') return <span className="text-emerald-400 font-bold text-[14px] leading-none shrink-0">+</span>
+    if (status === 'D') return <span className="text-red-400 font-bold text-[14px] leading-none shrink-0">-</span>
+    return <span className="text-amber-400 text-[12px] leading-none shrink-0">✏️</span>
+  }
+
+  // Build tree data structure
+  const treeRoot = { name: 'root', children: {}, isFile: false, path: '' }
+  files.forEach(f => {
+    const parts = f.file.split('/')
+    let current = treeRoot
+    let currentPath = ''
+    for (let i = 0; i < parts.length - 1; i++) {
+      const p = parts[i]
+      currentPath += (currentPath ? '/' : '') + p
+      if (!current.children[p]) {
+        current.children[p] = { name: p, children: {}, isFile: false, path: currentPath }
+      }
+      current = current.children[p]
+    }
+    const fileName = parts[parts.length - 1]
+    current.children[fileName] = { ...f, name: fileName, isFile: true, path: f.file }
+  })
 
   return (
-    <div className="p-3 space-y-0.5">
-      {statLines.map((line, i) => {
-        const isSum = line.match(/\d+ file/)
-        if (isSum) return (
-          <p key={i} className="text-slate-400 pt-1 border-t border-surface-700/60 mt-1">{line.trim()}</p>
-        )
-        const [file, stat] = line.split('|')
-        if (!stat) return <p key={i} className="text-slate-500">{line}</p>
-        const adds = (stat.match(/\+/g) || []).length
-        const dels = (stat.match(/-/g) || []).length
-        const filePath = file?.trim()
-        const isSelected = selectedFile === filePath
+    <div className="flex flex-col h-full">
+      {/* Header controls */}
+      <div className="px-3 py-2 flex items-center justify-between border-b border-surface-700/60 bg-surface-850/50 sticky top-0 z-10">
+        <span className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">
+          {files.length} modificados
+        </span>
+        <div className="flex rounded overflow-hidden border border-surface-600 bg-surface-800">
+          <button 
+            onClick={() => setViewMode('path')}
+            className={`px-2 py-1 text-[10px] font-medium flex items-center gap-1.5 transition-colors ${viewMode === 'path' ? 'bg-surface-600 text-slate-200' : 'text-slate-400 hover:bg-surface-700'}`}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+            Path
+          </button>
+          <button 
+            onClick={() => setViewMode('tree')}
+            className={`px-2 py-1 text-[10px] font-medium flex items-center gap-1.5 border-l border-surface-600 transition-colors ${viewMode === 'tree' ? 'bg-surface-600 text-slate-200' : 'text-slate-400 hover:bg-surface-700'}`}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+            Tree
+          </button>
+        </div>
+      </div>
 
+      <div className="p-2 space-y-0.5">
+        {viewMode === 'path' && files.map((fileObj, i) => {
+        const isSelected = selectedFile === fileObj.file
         return (
           <div
             key={i}
-            onClick={() => onFileClick?.(filePath)}
-            className={`flex items-center gap-2 px-1.5 py-0.5 rounded cursor-pointer transition-colors ${
+            onClick={() => onFileClick?.(fileObj)}
+            className={`flex items-center gap-2 px-1.5 py-1 rounded cursor-pointer transition-colors ${
               isSelected ? 'bg-brand-500/15' : 'hover:bg-surface-700/60'
             }`}
           >
-            <span className="text-slate-400 truncate flex-1">{filePath}</span>
-            <span className="text-emerald-400 shrink-0">+{adds}</span>
-            <span className="text-red-400 shrink-0">-{dels}</span>
+            <div className="w-4 flex items-center justify-center">
+              {getIcon(fileObj.status)}
+            </div>
+            <span className="text-slate-400 truncate flex-1">{fileObj.file}</span>
+            {fileObj.adds > 0 && <span className="text-emerald-400 shrink-0">+{fileObj.adds}</span>}
+            {fileObj.dels > 0 && <span className="text-red-400 shrink-0">-{fileObj.dels}</span>}
           </div>
         )
       })}
+        
+        {viewMode === 'tree' && (
+          <div className="py-1">
+            {Object.values(treeRoot.children)
+              .sort((a, b) => a.isFile === b.isFile ? a.name.localeCompare(b.name) : a.isFile ? 1 : -1)
+              .map(node => (
+                <FileTreeNode 
+                  key={node.path} 
+                  node={node} 
+                  level={0} 
+                  selectedFile={selectedFile} 
+                  onFileClick={onFileClick} 
+                  getIcon={getIcon}
+                />
+              ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function FileTreeNode({ node, level, selectedFile, onFileClick, getIcon }) {
+  const [isOpen, setIsOpen] = useState(true)
+
+  if (node.isFile) {
+    const isSelected = selectedFile === node.file
+    return (
+      <div
+        onClick={() => onFileClick?.(node)}
+        className={`flex items-center gap-2 py-1 rounded cursor-pointer transition-colors ${isSelected ? 'bg-brand-500/15' : 'hover:bg-surface-700/60'}`}
+        style={{ paddingLeft: `${(level * 12) + 8}px`, paddingRight: '8px' }}
+      >
+        <div className="w-4 flex items-center justify-center">
+          {getIcon(node.status)}
+        </div>
+        <span className="text-slate-400 truncate flex-1">{node.name}</span>
+        {node.adds > 0 && <span className="text-emerald-400 shrink-0">+{node.adds}</span>}
+        {node.dels > 0 && <span className="text-red-400 shrink-0">-{node.dels}</span>}
+      </div>
+    )
+  }
+
+  // Folder
+  return (
+    <div>
+      <div 
+        onClick={() => setIsOpen(!isOpen)}
+        className="flex items-center gap-1.5 py-1 px-2 rounded cursor-pointer hover:bg-surface-700/40 text-slate-400 transition-colors"
+        style={{ paddingLeft: `${(level * 12) + 8}px` }}
+      >
+        <svg 
+          width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+          className={`transition-transform shrink-0 ${isOpen ? 'rotate-90' : ''}`}
+        >
+          <polyline points="9 18 15 12 9 6" />
+        </svg>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0 text-slate-500">
+          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+        </svg>
+        <span className="truncate flex-1 font-medium">{node.name}</span>
+      </div>
+      
+      {isOpen && (
+        <div>
+          {Object.values(node.children)
+            .sort((a, b) => a.isFile === b.isFile ? a.name.localeCompare(b.name) : a.isFile ? 1 : -1)
+            .map(child => (
+              <FileTreeNode 
+                key={child.path} 
+                node={child} 
+                level={level + 1} 
+                selectedFile={selectedFile} 
+                onFileClick={onFileClick} 
+                getIcon={getIcon}
+              />
+            ))}
+        </div>
+      )}
     </div>
   )
 }

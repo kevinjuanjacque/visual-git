@@ -4,6 +4,7 @@ import Header       from './components/Header'
 import Sidebar      from './components/Sidebar'
 import GitGraph     from './components/GitGraph'
 import CommitDetail from './components/CommitDetail'
+import DiffViewOverlay from './components/DiffViewOverlay'
 import { GitErrorToast, ConflictBanner, DetachedHeadBanner } from './components/GitErrorToast'
 import { useGitData }   from './hooks/useGitData'
 import { useGitStatus } from './hooks/useGitStatus'
@@ -17,10 +18,43 @@ export default function App() {
   const [repos,          setRepos]           = useState([])
   const [selectedCommit, setSelectedCommit] = useState(null)
   const [scrollToHash,   setScrollToHash]   = useState(null)
+  const [pinnedBranches, setPinnedBranches] = useState([])
+  const [promptConfig,   setPromptConfig]   = useState(null)
+  const [selectedDiffFile, setSelectedDiffFile] = useState(null)
+
+  const showPrompt = useCallback((title) => {
+    return new Promise((resolve) => {
+      setPromptConfig({ title, resolve })
+    })
+  }, [])
+
+  // Load pinned branches for this repo when repo changes
+  useEffect(() => {
+    if (!currentRepo) {
+      setPinnedBranches([])
+      return
+    }
+    try {
+      const stored = localStorage.getItem(`pinned:${currentRepo}`)
+      setPinnedBranches(stored ? JSON.parse(stored) : [])
+    } catch {
+      setPinnedBranches([])
+    }
+  }, [currentRepo])
+
+  const togglePin = useCallback((branchName) => {
+    if (!currentRepo) return
+    setPinnedBranches(prev => {
+      const isPinned = prev.includes(branchName)
+      const next = isPinned ? prev.filter(b => b !== branchName) : [...prev, branchName]
+      localStorage.setItem(`pinned:${currentRepo}`, JSON.stringify(next))
+      return next
+    })
+  }, [currentRepo])
 
   // Git log data
   const { commits, branches, currentBranch, loading, error, lastRefresh, nextRefresh, refresh } =
-    useGitData(currentRepo)
+    useGitData(currentRepo, pinnedBranches)
 
   // Git working-tree status (WIP, staging, tags, stashes)
   const { staged, unstaged, untracked, hasWip, tags, stashes, refreshStatus } =
@@ -203,7 +237,7 @@ export default function App() {
   // ── Detached HEAD: create branch ────────────────────────────────────────────
 
   async function handleCreateBranchFromDetached() {
-    const name = window.prompt('Crear rama en el commit actual:\nIngresa el nombre:')
+    const name = await showPrompt('Crear rama en el commit actual:\nIngresa el nombre:')
     if (!name) return
     await runGit(
       async () => {
@@ -321,11 +355,14 @@ export default function App() {
           onStashDrop={handleStashDrop}
         />
 
-        <main className="flex-1 overflow-hidden">
+        <main className="flex-1 overflow-hidden relative">
           <GitGraph
             commits={graphCommits}
             selectedHash={selectedCommit?.hash}
-            onSelectCommit={setSelectedCommit}
+            onSelectCommit={(commit) => {
+              setSelectedCommit(commit)
+              setSelectedDiffFile(null) // clear diff view when changing commit
+            }}
             loading={loading}
             error={error}
             repoPath={currentRepo}
@@ -333,6 +370,8 @@ export default function App() {
             scrollToHash={scrollToHash}
             onScrollHandled={() => setScrollToHash(null)}
             conflictedFiles={conflictState?.files || []}
+            pinnedBranches={pinnedBranches}
+            onTogglePin={togglePin}
             onGitAction={async (action, commit, extra) => {
               // Route graph context menu actions through runGit
               await runGit(
@@ -342,8 +381,11 @@ export default function App() {
                     case 'checkout':
                       res = await window.electronAPI.checkout({ folderPath: currentRepo, branch: commit.hash })
                       break
+                    case 'checkout-branch':
+                      res = await window.electronAPI.checkout({ folderPath: currentRepo, branch: extra })
+                      break
                     case 'branch': {
-                      const name = window.prompt(`Crear rama en ${commit.shortHash}\nIngresa el nombre:`)
+                      const name = await showPrompt(`Crear rama en ${commit.shortHash}\nIngresa el nombre:`)
                       if (!name) return { ok: true }
                       res = await window.electronAPI.createBranch({ folderPath: currentRepo, branchName: name, hash: commit.hash })
                       break
@@ -372,6 +414,13 @@ export default function App() {
               refresh(); refreshStatus()
             }}
           />
+          {selectedDiffFile && (
+            <DiffViewOverlay 
+              fileParams={selectedDiffFile}
+              repoPath={currentRepo}
+              onClose={() => setSelectedDiffFile(null)}
+            />
+          )}
         </main>
 
         <CommitDetail
@@ -385,6 +434,7 @@ export default function App() {
           onUnstageFiles={handleUnstageFiles}
           onCommit={handleCommit}
           onRefreshStatus={refreshStatus}
+          onFileClick={setSelectedDiffFile}
         />
       </div>
 
@@ -394,6 +444,39 @@ export default function App() {
         onDismiss={dismissError}
         onAction={handleToastAction}
       />
+
+      {promptConfig && (
+        <PromptModal 
+          title={promptConfig.title} 
+          onConfirm={(val) => { promptConfig.resolve(val); setPromptConfig(null) }} 
+          onCancel={() => { promptConfig.resolve(null); setPromptConfig(null) }} 
+        />
+      )}
+    </div>
+  )
+}
+
+function PromptModal({ title, onConfirm, onCancel }) {
+  const [value, setValue] = useState('')
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm">
+      <div className="w-80 bg-surface-800 border border-surface-600 rounded-lg shadow-2xl p-4">
+        <h3 className="text-sm font-medium text-white mb-3 whitespace-pre-line">{title}</h3>
+        <input 
+          autoFocus 
+          value={value} 
+          onChange={e => setValue(e.target.value)} 
+          onKeyDown={e => {
+            if (e.key === 'Enter') onConfirm(value)
+            if (e.key === 'Escape') onCancel()
+          }}
+          className="w-full bg-surface-900 border border-surface-700 rounded px-3 py-1.5 text-sm text-white focus:outline-none focus:border-brand-500 mb-4" 
+        />
+        <div className="flex justify-end gap-2">
+          <button onClick={onCancel} className="px-3 py-1.5 rounded text-xs font-medium bg-surface-700 hover:bg-surface-600 text-slate-300">Cancelar</button>
+          <button onClick={() => onConfirm(value)} className="px-3 py-1.5 rounded text-xs font-medium bg-brand-600 hover:bg-brand-500 text-white">Aceptar</button>
+        </div>
+      </div>
     </div>
   )
 }

@@ -28,6 +28,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   validateRepo:    (path)         => ipcRenderer.invoke('git:validateRepo', path),
   getLog:          (path)         => ipcRenderer.invoke('git:getLog', path),
   getCommitDetail: (data)         => ipcRenderer.invoke('git:getCommitDetail', data),
+  getCommitStats:  (data)         => ipcRenderer.invoke('git:getCommitStats', data),
   getBranches:     (path)         => ipcRenderer.invoke('git:getBranches', path),
   checkout:        (data)         => ipcRenderer.invoke('git:checkout', data),
   createBranch:    (data)         => ipcRenderer.invoke('git:createBranch', data),

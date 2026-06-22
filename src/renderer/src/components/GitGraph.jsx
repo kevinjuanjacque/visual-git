@@ -2,7 +2,7 @@ import { useRef, useState, useEffect, useCallback, useMemo } from 'react'
 import { LANE_COLORS } from '../utils/graphLayout'
 
 const ROW_H = 32
-const COL_W = 24
+const COL_W = 20
 const DOT_R = 5
 const PAD   = 16
 
@@ -10,13 +10,14 @@ export default function GitGraph({
   commits, selectedHash, onSelectCommit,
   loading, error, repoPath, onRefresh,
   scrollToHash, onScrollHandled,
-  conflictedFiles = [], onGitAction
+  conflictedFiles = [], onGitAction,
+  pinnedBranches = [], onTogglePin
 }) {
   const listRef   = useRef(null)
   const [filter, setFilter] = useState('')
 
   // ── Column resize ─────────────────────────────────────────────────────────
-  const [colWidths, setColWidths] = useState({ desc: 400, author: 120, hash: 100, date: 120 })
+  const [colWidths, setColWidths] = useState({ refs: 150, desc: 400, author: 120, stats: 100, date: 120 })
   const draggingRef = useRef(null)
 
   const handleMouseDown = (e, col) => {
@@ -61,19 +62,13 @@ export default function GitGraph({
     )
   }, [commits, filter])
 
-  const rowMap = useMemo(() => new Map(filtered.map((c, i) => [c.hash, i])), [filtered])
-
   const svgW = useMemo(() => {
-    const maxCol = filtered.reduce((m, c) => {
-      if (c.isWip) return Math.max(m, 0)
-      const connMax = c.connections?.reduce((cm, cn) => Math.max(cm, cn.fromCol, cn.toCol), 0) ?? 0
-      return Math.max(m, c.col ?? 0, connMax)
-    }, 0)
-    return PAD + (maxCol + 1) * COL_W + 12
+    if (!filtered.length) return 100
+    return PAD + (filtered[0].totalCols) * COL_W + 24
   }, [filtered])
 
   const totalH = filtered.length * ROW_H
-  const totalWidth = svgW + colWidths.desc + colWidths.author + colWidths.hash + colWidths.date
+  const totalWidth = colWidths.refs + svgW + colWidths.desc + colWidths.author + colWidths.stats + colWidths.date
 
   // ── Keyboard nav ──────────────────────────────────────────────────────────
   const handleKey = useCallback(e => {
@@ -88,113 +83,50 @@ export default function GitGraph({
     return () => window.removeEventListener('keydown', handleKey)
   }, [handleKey])
 
-  // Auto-scroll on selection
-  useEffect(() => {
-    if (!selectedHash || !listRef.current) return
-    listRef.current.querySelector(`[data-hash="${selectedHash}"]`)?.scrollIntoView({ block: 'nearest' })
-  }, [selectedHash])
-
-  // Scroll to hash from sidebar tag click
+  // Scroll to hash
   useEffect(() => {
     if (!scrollToHash || !listRef.current) return
-    const el = listRef.current.querySelector(`[data-hash="${scrollToHash}"]`)
-    if (el) { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); onScrollHandled?.() }
-  }, [scrollToHash, onScrollHandled])
-
-  // ── SVG Elements ──────────────────────────────────────────────────────────
-  const { passLines, connLines, dots } = useMemo(() => {
-    const passLines = [], connLines = [], dots = []
-
-    filtered.forEach((commit, rowIdx) => {
-      if (commit.isWip) return // WIP rendered separately
-
-      const cx = PAD + commit.col * COL_W
-      const cy = rowIdx * ROW_H + ROW_H / 2
-
-      commit.activeLanes?.forEach((hash, laneIdx) => {
-        if (!hash) return
-        if (laneIdx === commit.col) return
-        if (typeof hash === 'string' && hash.startsWith('reserved:')) return
-        const x = PAD + laneIdx * COL_W
-        const color = LANE_COLORS[laneIdx % LANE_COLORS.length]
-        passLines.push(
-          <line key={`pt-${rowIdx}-${laneIdx}`} x1={x} y1={rowIdx * ROW_H} x2={x} y2={(rowIdx + 1) * ROW_H}
-            stroke={color} strokeWidth="2" strokeOpacity="0.35" strokeLinecap="round" />
-        )
-      })
-
-      commit.connections?.forEach((conn, i) => {
-        const targetRow = rowMap.get(conn.toHash)
-        if (targetRow === undefined) return
-        const tx    = PAD + conn.toCol * COL_W
-        const ty    = targetRow * ROW_H + ROW_H / 2
-        const color = LANE_COLORS[conn.fromCol % LANE_COLORS.length]
-        connLines.push(
-          <path key={`conn-${rowIdx}-${i}`} d={buildPath(cx, cy, tx, ty, conn.type)}
-            fill="none" stroke={color} strokeWidth="2" strokeOpacity="0.85" strokeLinecap="round" strokeLinejoin="round" />
-        )
-      })
-
-      const isSelected = commit.hash === selectedHash || selectedHashes.has(commit.hash)
-      const dotColor   = commit.color
-
-      if (isSelected) dots.push(<circle key={`glow-${commit.hash}`} cx={cx} cy={cy} r={DOT_R + 6} fill="none" stroke={dotColor} strokeWidth="1.5" strokeOpacity="0.3" />)
-      if (commit.isHead) dots.push(<circle key={`ring-${commit.hash}`} cx={cx} cy={cy} r={DOT_R + 4} fill="none" stroke={commit.color} strokeWidth="1.5" strokeOpacity="0.5" />)
-      dots.push(
-        <circle key={`dot-${commit.hash}`} cx={cx} cy={cy}
-          r={commit.isHead ? DOT_R + 1 : DOT_R}
-          fill={isSelected ? '#fff' : dotColor}
-          stroke={isSelected ? dotColor : 'transparent'}
-          strokeWidth={isSelected ? 2 : 0} />
-      )
-    })
-
-    // WIP connecting line to first real commit
-    const wipCommit = filtered[0]
-    if (wipCommit?.isWip && filtered[1]) {
-      const y1 = ROW_H / 2
-      const y2 = ROW_H + ROW_H / 2
-      passLines.unshift(
-        <line key="wip-line" x1={PAD} y1={y1} x2={PAD} y2={y2}
-          stroke="#475569" strokeWidth="2" strokeOpacity="0.5" strokeDasharray="4 3" strokeLinecap="round" />
-      )
+    const idx = filtered.findIndex(c => c.hash === scrollToHash)
+    if (idx !== -1) {
+      listRef.current.scrollTop = Math.max(0, idx * ROW_H - listRef.current.clientHeight / 2)
+      onScrollHandled?.()
     }
+  }, [scrollToHash, onScrollHandled, filtered])
 
-    return { passLines, connLines, dots }
-  }, [filtered, rowMap, selectedHash, selectedHashes])
+  // ── Virtualization ────────────────────────────────────────────────────────
+  const [scrollTop, setScrollTop] = useState(0)
+  const [clientHeight, setClientHeight] = useState(800)
 
-  // ── Context menu actions — delegated to App for centralized error handling ──
+  useEffect(() => {
+    if (!listRef.current) return
+    const el = listRef.current
+    const onScroll = () => setScrollTop(el.scrollTop)
+    const onResize = () => setClientHeight(el.clientHeight)
+    el.addEventListener('scroll', onScroll, { passive: true })
+    window.addEventListener('resize', onResize)
+    onResize()
+    return () => { el.removeEventListener('scroll', onScroll); window.removeEventListener('resize', onResize) }
+  }, [])
+
+  const startIndex = Math.max(0, Math.floor(scrollTop / ROW_H) - 10)
+  const endIndex = Math.min(filtered.length, Math.ceil((scrollTop + clientHeight) / ROW_H) + 10)
+  const visibleCommits = filtered.slice(startIndex, endIndex)
+
+  // ── Handlers ──────────────────────────────────────────────────────────────
   async function handleAction(action, commit, extra) {
     if (!repoPath) return
     if (onGitAction) {
       await onGitAction(action, commit, extra)
     } else {
-      // Fallback (no error system): raw calls with simple alert
-      try {
-        let res
-        if (action === 'checkout') res = await window.electronAPI.checkout({ folderPath: repoPath, branch: commit.hash })
-        else if (action === 'branch') {
-          const name = window.prompt(`Crear rama en ${commit.shortHash}\nIngresa el nombre:`)
-          if (name) res = await window.electronAPI.createBranch({ folderPath: repoPath, branchName: name, hash: commit.hash })
-        }
-        else if (action === 'merge')       res = await window.electronAPI.merge({ folderPath: repoPath, target: commit.hash })
-        else if (action === 'rebase')      res = await window.electronAPI.rebase({ folderPath: repoPath, target: commit.hash })
-        else if (action === 'reset')       res = await window.electronAPI.reset({ folderPath: repoPath, mode: extra, hash: commit.hash })
-        else if (action === 'cherry-pick') res = await window.electronAPI.cherryPick({ folderPath: repoPath, hash: commit.hash })
-        if (res && !res.ok) alert(`Error: ${res.error}`)
-        else onRefresh?.()
-      } catch (err) { alert(`Error: ${err.message || err}`) }
+      alert("Acción no implementada sin onGitAction")
     }
   }
 
-  // ── Row click handler ─────────────────────────────────────────────────────
   function handleRowClick(commit, e) {
     if (e.shiftKey || e.metaKey || e.ctrlKey) {
-      // Multi-select
       setSelectedHashes(prev => {
         const next = new Set(prev)
         if (e.shiftKey && selectedHash) {
-          // Select range
           const a = filtered.findIndex(c => c.hash === selectedHash)
           const b = filtered.findIndex(c => c.hash === commit.hash)
           const [from, to] = a < b ? [a, b] : [b, a]
@@ -209,6 +141,43 @@ export default function GitGraph({
       setSelectedHashes(new Set())
       onSelectCommit(commit)
     }
+  }
+
+  // ── Hover Tooltip ─────────────────────────────────────────────────────────
+  const [hoverInfo, setHoverInfo] = useState(null)
+  const hoverTimeout = useRef(null)
+
+  const handleMouseEnterRow = (e, commit) => {
+    clearTimeout(hoverTimeout.current)
+    if (commit.isWip || contextMenu) {
+      setHoverInfo(null)
+      return
+    }
+    const rect = e.currentTarget.getBoundingClientRect()
+    hoverTimeout.current = setTimeout(async () => {
+      try {
+        const stats = await window.electronAPI.getCommitStats({ folderPath: repoPath, hash: commit.hash })
+        setHoverInfo({
+          commit,
+          stats,
+          y: rect.top + ROW_H + 5,
+          x: Math.max(10, e.clientX - 100)
+        })
+      } catch {
+        // ignore
+      }
+    }, 400) // 400ms delay for tooltip
+  }
+
+  const handleMouseLeaveRow = () => {
+    clearTimeout(hoverTimeout.current)
+    setHoverInfo(null)
+  }
+
+  const handleScroll = () => {
+    // clear tooltip on scroll
+    clearTimeout(hoverTimeout.current)
+    setHoverInfo(null)
   }
 
   function handleContextMenu(e, commit) {
@@ -230,14 +199,10 @@ export default function GitGraph({
           className="flex-1 bg-transparent text-sm text-slate-300 placeholder-slate-600 focus:outline-none"
         />
         {filter && <button onClick={() => setFilter('')} className="text-slate-500 hover:text-slate-300 text-lg leading-none">×</button>}
-        {selectedHashes.size > 1 && (
-          <span className="text-[10px] text-brand-400 font-medium">{selectedHashes.size} seleccionados</span>
-        )}
-        <span className="text-[10px] text-slate-600 font-mono">{filtered.length}/{commits.length}</span>
       </div>
 
       {/* Main scroll area */}
-      <div ref={listRef} className="flex-1 overflow-auto bg-surface-900">
+      <div ref={listRef} onScroll={handleScroll} className="flex-1 overflow-auto bg-surface-900">
         {loading && commits.length === 0 && (
           <div className="flex items-center justify-center h-32 gap-2 text-slate-500 text-sm">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="animate-spin"><path d="M21 12a9 9 0 11-6.219-8.56"/></svg>
@@ -245,21 +210,26 @@ export default function GitGraph({
           </div>
         )}
         {error && <div className="mx-3 my-3 p-3 bg-red-900/30 border border-red-700/50 rounded-lg text-xs text-red-400">{error}</div>}
-        {!loading && !error && commits.length === 0 && (
-          <div className="flex flex-col items-center justify-center h-48 text-slate-600 text-sm gap-2">
-            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-            Abre un repositorio Git para ver el historial
-          </div>
-        )}
 
         {filtered.length > 0 && (
           <div className="relative" style={{ minWidth: totalWidth, width: 'max-content', minHeight: '100%' }}>
 
             {/* Sticky Header */}
             <div className="sticky top-0 z-20 flex items-center h-7 bg-surface-950/90 backdrop-blur border-b border-surface-700 text-[10px] text-slate-500 uppercase tracking-wider font-medium select-none shadow-sm" style={{ width: totalWidth }}>
+              
+              <div style={{ width: colWidths.refs }} className="relative shrink-0 px-2 border-r border-surface-700/50 flex items-center justify-end">
+                Ramas / Tags
+                <div
+                  className="absolute right-[-2px] top-0 bottom-0 w-4 cursor-col-resize z-30 flex items-center justify-center group"
+                  onMouseDown={e => handleMouseDown(e, 'refs')}
+                >
+                  <div className="w-px h-full bg-transparent group-hover:bg-brand-500 transition-colors" />
+                </div>
+              </div>
+
               <div style={{ width: svgW }} className="shrink-0 px-2 border-r border-surface-700/50">Graph</div>
 
-              {[['desc', 'Descripción'], ['author', 'Autor'], ['hash', 'Hash'], ['date', 'Fecha']].map(([key, label]) => (
+              {[['desc', 'Descripción'], ['author', 'Autor'], ['stats', 'Líneas'], ['date', 'Fecha']].map(([key, label]) => (
                 <div key={key} style={{ width: colWidths[key] }} className="relative shrink-0 px-2 border-r border-surface-700/50 flex items-center">
                   {label}
                   <div
@@ -274,22 +244,24 @@ export default function GitGraph({
 
             {/* Content area */}
             <div className="relative" style={{ height: totalH, width: totalWidth }}>
-              <svg width={svgW} height={totalH} style={{ position: 'absolute', top: 0, left: 0, pointerEvents: 'none', zIndex: 1 }}>
-                {passLines}{connLines}{dots}
-              </svg>
-
-              {filtered.map((commit, rowIdx) => (
-                <CommitRow
-                  key={commit.hash}
-                  commit={commit}
-                  rowIdx={rowIdx}
-                  svgW={svgW}
-                  colWidths={colWidths}
-                  isSelected={commit.hash === selectedHash || selectedHashes.has(commit.hash)}
-                  onClick={e => handleRowClick(commit, e)}
-                  onContextMenu={e => handleContextMenu(e, commit)}
-                />
-              ))}
+              {visibleCommits.map((commit, i) => {
+                const globalRowIdx = startIndex + i
+                return (
+                  <CommitRow
+                    key={commit.hash}
+                    commit={commit}
+                    svgW={svgW}
+                    colWidths={colWidths}
+                    isSelected={commit.hash === selectedHash || selectedHashes.has(commit.hash)}
+                    onClick={e => handleRowClick(commit, e)}
+                    onContextMenu={e => handleContextMenu(e, commit)}
+                    onMouseEnter={e => handleMouseEnterRow(e, commit)}
+                    onMouseLeave={handleMouseLeaveRow}
+                    onDoubleClickBranch={(b) => handleAction('checkout-branch', commit, b)}
+                    style={{ position: 'absolute', top: globalRowIdx * ROW_H, height: ROW_H, width: '100%' }}
+                  />
+                )
+              })}
             </div>
           </div>
         )}
@@ -301,9 +273,15 @@ export default function GitGraph({
           y={contextMenu.y}
           commit={contextMenu.commit}
           multiCount={selectedHashes.size}
+          pinnedBranches={pinnedBranches}
+          onTogglePin={onTogglePin}
           onClose={() => setContextMenu(null)}
           onAction={handleAction}
         />
+      )}
+
+      {hoverInfo && !contextMenu && (
+        <CommitTooltip info={hoverInfo} />
       )}
     </div>
   )
@@ -311,34 +289,86 @@ export default function GitGraph({
 
 // ── CommitRow ─────────────────────────────────────────────────────────────────
 
-function CommitRow({ commit, rowIdx, svgW, colWidths, isSelected, onClick, onContextMenu }) {
+function CommitRow({ commit, svgW, colWidths, isSelected, onClick, onContextMenu, onMouseEnter, onMouseLeave, onDoubleClickBranch, style }) {
   const isWip = commit.isWip
+  const [hoveredRefs, setHoveredRefs] = useState(false)
+
+  const refsItems = useMemo(() => {
+    if (isWip) return []
+    const groups = new Map()
+    commit.branches?.forEach(b => {
+      const isRemote = b.startsWith('remotes/') || b.startsWith('origin/')
+      const name = b.replace(/^remotes\/[^/]+\//, '').replace(/^origin\//, '')
+      if (!groups.has(name)) groups.set(name, { name, isLocal: false, isRemote: false, isHead: false, originals: [] })
+      const g = groups.get(name)
+      g.originals.push(b)
+      if (isRemote) g.isRemote = true
+      else {
+        g.isLocal = true
+        if (commit.headBranch) {
+          if (name === commit.headBranch) g.isHead = true
+        } else if (commit.isHead) {
+          // Fallback if backend hasn't been restarted yet to provide headBranch
+          const localBranches = commit.branches.filter(br => !br.startsWith('remotes/') && !br.startsWith('origin/'))
+          if (b === localBranches[0] || localBranches.length === 0) g.isHead = true
+        }
+      }
+    })
+    const branchItems = Array.from(groups.values())
+    branchItems.sort((a, b) => {
+      if (a.isHead && !b.isHead) return -1
+      if (!a.isHead && b.isHead) return 1
+      return 0
+    })
+    const tagItems = (commit.tags || []).map(t => ({ name: t, isTag: true, originals: [t] }))
+    return [...branchItems, ...tagItems]
+  }, [commit.branches, commit.tags, commit.isHead, isWip])
 
   return (
     <div
       data-hash={commit.hash}
       onClick={onClick}
       onContextMenu={e => onContextMenu(e, commit)}
-      className={`absolute w-full flex items-center cursor-pointer select-none transition-colors duration-100 group ${
+      className={`flex items-center cursor-pointer select-none transition-colors duration-100 group ${
         isSelected
           ? isWip ? 'bg-slate-700/30 border-l-2 border-slate-500' : 'bg-brand-500/10 border-l-2 border-brand-400'
           : 'hover:bg-surface-800/80 border-l-2 border-transparent'
       }`}
-      style={{ top: rowIdx * ROW_H, height: ROW_H, zIndex: 2 }}
+      style={{ ...style, zIndex: hoveredRefs ? 50 : 1 }}
     >
-      {/* Graph spacer */}
-      <div style={{ width: svgW }} className="shrink-0 relative">
-        {/* WIP ghost node rendered in SVG space */}
-        {isWip && (
-          <div className="absolute inset-0 flex items-center" style={{ left: PAD - 7 }}>
-            <div className="w-3.5 h-3.5 rounded-sm border-2 border-dashed border-slate-500 bg-surface-900 flex items-center justify-center">
-              <svg width="7" height="7" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="3">
-                <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
-                <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
-              </svg>
-            </div>
+      {/* Refs (Branches/Tags) */}
+      <div 
+        style={{ width: colWidths.refs }} 
+        className="shrink-0 px-2 flex items-center justify-end gap-1 overflow-visible h-full relative"
+        onMouseEnter={() => setHoveredRefs(true)}
+        onMouseLeave={() => setHoveredRefs(false)}
+      >
+        {!isWip && refsItems.length > 0 && (
+          <div className="flex items-center justify-end gap-1 shrink-0 w-full">
+            <RefPill item={refsItems[0]} onDoubleClickBranch={onDoubleClickBranch} />
+            {refsItems.length > 1 && (
+              <span className="inline-flex items-center text-[11px] font-medium px-2 py-1 rounded font-mono leading-none whitespace-nowrap bg-brand-600/90 text-white cursor-default">
+                +{refsItems.length - 1}
+              </span>
+            )}
+            
+            {/* Hover Popover */}
+            {hoveredRefs && refsItems.length > 1 && (
+              <div className="absolute top-full right-2 pt-1 z-[100] cursor-default" onClick={e => e.stopPropagation()}>
+                <div className="flex flex-col gap-1 bg-surface-800 border border-surface-600 rounded-lg shadow-2xl shadow-black/80 p-2 items-end">
+                  {refsItems.map((item, i) => (
+                    <RefPill key={i} item={item} onDoubleClickBranch={onDoubleClickBranch} />
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
+      </div>
+
+      {/* Graph segment */}
+      <div style={{ width: svgW }} className="shrink-0 relative h-full">
+        <GraphSegmentSvg commit={commit} svgW={svgW} onMouseEnterNode={onMouseEnter} onMouseLeaveNode={onMouseLeave} />
       </div>
 
       {/* Description */}
@@ -346,53 +376,24 @@ function CommitRow({ commit, rowIdx, svgW, colWidths, isSelected, onClick, onCon
         {isWip ? (
           <span className="text-[13px] text-slate-400 font-mono italic">// WIP — cambios sin commitear</span>
         ) : (
-          <>
-            {(commit.branches?.length > 0 || commit.tags?.length > 0) && (
-              <div className="flex items-center gap-1 shrink-0">
-                {commit.branches?.slice(0, 3).map(b => {
-                  const isRemote = b.startsWith('remotes/') || b.startsWith('origin/')
-                  const label    = b.replace('remotes/', '').replace('origin/', '')
-                  const isHead   = commit.isHead && !isRemote
-                  return (
-                    <span key={b} className={`inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded-sm font-mono leading-none whitespace-nowrap ${
-                      isHead ? 'bg-emerald-500/20 text-emerald-400 ring-1 ring-emerald-500/30'
-                      : isRemote ? 'bg-surface-700/80 text-slate-500'
-                      : 'bg-brand-500/15 text-brand-400 ring-1 ring-brand-500/25'
-                    }`}>
-                      <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="shrink-0">
-                        <line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/>
-                        <path d="M18 9a9 9 0 01-9 9"/>
-                      </svg>
-                      {isHead ? '● ' : ''}{label}
-                    </span>
-                  )
-                })}
-                {commit.tags?.slice(0, 2).map(tag => (
-                  <span key={tag} className="inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded-sm font-mono leading-none whitespace-nowrap bg-amber-500/15 text-amber-400 ring-1 ring-amber-500/25">
-                    <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="shrink-0">
-                      <path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/>
-                      <line x1="7" y1="7" x2="7.01" y2="7"/>
-                    </svg>
-                    {tag}
-                  </span>
-                ))}
-              </div>
-            )}
-            <span className={`text-[13px] truncate transition-colors ${isSelected ? 'text-white font-medium' : 'text-slate-300 group-hover:text-white'}`}>
-              {commit.subject || '(sin mensaje)'}
-            </span>
-          </>
+          <span className={`text-[13px] truncate transition-colors ${isSelected ? 'text-white font-medium' : 'text-slate-300 group-hover:text-white'}`}>
+            {commit.subject || '(sin mensaje)'}
+          </span>
         )}
       </div>
 
       {/* Author */}
-      <div style={{ width: colWidths.author }} className="shrink-0 px-2 text-[11px] text-slate-500 truncate text-right">
-        {commit.authorName}
+      <div style={{ width: colWidths.author }} className="shrink-0 px-2 flex items-center justify-end gap-2 overflow-hidden">
+        <span className="text-[11px] text-slate-500 truncate">{commit.authorName}</span>
+        {!isWip && commit.authorAvatar && (
+          <img src={commit.authorAvatar} alt="" className="w-5 h-5 rounded-full bg-surface-800 shrink-0 border border-surface-700" />
+        )}
       </div>
 
-      {/* Hash */}
-      <div style={{ width: colWidths.hash }} className="shrink-0 px-2 text-[11px] font-mono truncate text-right text-slate-600">
-        {isWip ? '———' : commit.shortHash}
+      {/* Stats */}
+      <div style={{ width: colWidths.stats }} className="shrink-0 px-2 flex items-center justify-end gap-1.5 overflow-hidden text-[10px]">
+        {!isWip && commit.insertions > 0 && <span className="text-emerald-400 font-medium">+{commit.insertions}</span>}
+        {!isWip && commit.deletions > 0 && <span className="text-red-400 font-medium">-{commit.deletions}</span>}
       </div>
 
       {/* Date */}
@@ -403,9 +404,130 @@ function CommitRow({ commit, rowIdx, svgW, colWidths, isSelected, onClick, onCon
   )
 }
 
+// ── Segment SVG rendering ─────────────────────────────────────────────────────
+
+function GraphSegmentSvg({ commit, svgW, onMouseEnterNode, onMouseLeaveNode }) {
+  const { isWip, col, activeLanes, incomingConnections, outgoingConnections, color } = commit
+  const cy = ROW_H / 2
+  const cx = PAD + col * COL_W
+
+  const elements = []
+  const nodeRadius = commit.authorAvatar ? 8 : DOT_R
+
+  // 1. Pass-throughs & incoming
+  activeLanes?.forEach((lane, i) => {
+    if (!lane) return
+    const x = PAD + i * COL_W
+    const strokeColor = LANE_COLORS[lane.colorIdx % LANE_COLORS.length]
+
+    if (incomingConnections?.some(ic => ic.fromCol === i)) {
+      // Incoming bend from parent lane to this node
+      const sign = col > i ? 1 : -1
+      const BEND = 12
+      const absDist = Math.abs(col * COL_W - i * COL_W)
+      const actualBend = Math.min(BEND, absDist / 2)
+      const startX = x
+      const endX = PAD + col * COL_W - sign * nodeRadius
+      
+      const d = `
+        M ${startX} 0
+        L ${startX} ${cy - actualBend}
+        Q ${startX} ${cy} ${startX + sign * actualBend} ${cy}
+        L ${endX} ${cy}
+      `.trim().replace(/\s+/g, ' ')
+      
+      elements.push(<path key={`inc-${i}`} d={d} fill="none" stroke={strokeColor} strokeWidth="2" opacity="0.9" />)
+    } else if (i === col) {
+      // Straight incoming to this node
+      elements.push(<line key={`pt-in-${i}`} x1={x} y1={0} x2={x} y2={cy} stroke={strokeColor} strokeWidth="2" />)
+    } else {
+      // Pass-through
+      elements.push(<line key={`pt-out-${i}`} x1={x} y1={0} x2={x} y2={ROW_H} stroke={strokeColor} strokeWidth="2" opacity="0.6" />)
+    }
+  })
+
+  // 2. Outgoing connections (branches/merges)
+  // Main continuation down
+  if (commit.parents?.length > 0) {
+    elements.push(<line key="main-out" x1={cx} y1={cy} x2={cx} y2={ROW_H} stroke={color} strokeWidth="2" />)
+  }
+
+  outgoingConnections?.forEach((out, i) => {
+    const tx = PAD + out.toCol * COL_W
+    const strokeColor = LANE_COLORS[out.colorIdx % LANE_COLORS.length]
+    const sign = out.toCol > col ? 1 : -1
+    const startX = cx + sign * nodeRadius
+    
+    const BEND = 12
+    const absDist = Math.abs(tx - startX)
+    const actualBend = Math.min(BEND, absDist / 2)
+    
+    const d = `
+      M ${startX} ${cy}
+      L ${tx - sign * actualBend} ${cy}
+      Q ${tx} ${cy} ${tx} ${cy + actualBend}
+      L ${tx} ${ROW_H}
+    `.trim().replace(/\s+/g, ' ')
+    
+    elements.push(<path key={`out-${i}`} d={d} fill="none" stroke={strokeColor} strokeWidth="2" opacity="0.9" />)
+  })
+
+  // 3. The node itself
+  if (isWip) {
+    elements.push(
+      <rect 
+        key="wip-node" x={cx - 5} y={cy - 5} width="10" height="10" fill="#0f172a" stroke="#94a3b8" strokeWidth="2" strokeDasharray="2 1" rx="2" 
+        className="pointer-events-auto"
+        onMouseEnter={onMouseEnterNode}
+        onMouseLeave={onMouseLeaveNode}
+      />
+    )
+  } else {
+    if (commit.isHead) {
+      elements.push(<circle key="head-ring" cx={cx} cy={cy} r={10} fill="none" stroke={color} strokeWidth="2" opacity="0.5" />)
+    }
+    
+    const isMerge = commit.parents?.length > 1
+    
+    if (commit.authorAvatar && !isMerge) {
+      const imgSize = 20
+      elements.push(
+        <g 
+          key="node-avatar"
+          className="pointer-events-auto cursor-pointer hover:opacity-90"
+          onMouseEnter={onMouseEnterNode}
+          onMouseLeave={onMouseLeaveNode}
+        >
+          <circle cx={cx} cy={cy} r={imgSize / 2 + 1.5} fill="#0f172a" />
+          <clipPath id={`clip-${commit.hash}`}>
+            <circle cx={cx} cy={cy} r={imgSize / 2} />
+          </clipPath>
+          <image href={commit.authorAvatar} x={cx - imgSize / 2} y={cy - imgSize / 2} height={imgSize} width={imgSize} clipPath={`url(#clip-${commit.hash})`} />
+          <circle cx={cx} cy={cy} r={imgSize / 2} fill="none" stroke={color} strokeWidth="1.5" />
+        </g>
+      )
+    } else {
+      elements.push(
+        <circle 
+          key="node" cx={cx} cy={cy} r={DOT_R} fill={color} stroke="#0f172a" strokeWidth="2" 
+          className="pointer-events-auto cursor-pointer hover:stroke-white transition-colors"
+          onMouseEnter={onMouseEnterNode}
+          onMouseLeave={onMouseLeaveNode}
+        />
+      )
+    }
+  }
+
+  return (
+    <svg width={svgW} height={ROW_H} className="absolute inset-0 pointer-events-none">
+      {elements}
+    </svg>
+  )
+}
+
 // ── ContextMenu ───────────────────────────────────────────────────────────────
 
-function ContextMenu({ x, y, commit, multiCount, onClose, onAction }) {
+function ContextMenu({ x, y, commit, multiCount, pinnedBranches, onTogglePin, onClose, onAction }) {
   const menuRef = useRef(null)
   const [pos, setPos] = useState({ x, y })
   const [resetOpen, setResetOpen] = useState(false)
@@ -419,6 +541,10 @@ function ContextMenu({ x, y, commit, multiCount, onClose, onAction }) {
       y: y + r.height > window.innerHeight ? window.innerHeight - r.height - 5 : y,
     })
   }, [x, y])
+
+  // Get first local branch from commit for Pin action
+  const localBranch = commit.branches?.find(b => !b.startsWith('remotes/') && !b.startsWith('origin/'))
+  const isPinned = localBranch ? pinnedBranches.includes(localBranch) : false
 
   return (
     <div
@@ -440,20 +566,24 @@ function ContextMenu({ x, y, commit, multiCount, onClose, onAction }) {
 
       {multiCount > 1 && (
         <>
-          <MenuItem icon={<SquashIcon />} label={`Squash ${multiCount} commits`}
-            onClick={() => { onAction('squash', commit); onClose() }} />
-          <MenuItem icon={<CherryIcon />} label={`Cherry-pick ${multiCount} commits`}
-            onClick={() => { onAction('cherry-pick-multi', commit); onClose() }} />
+          <MenuItem icon={<SquashIcon />} label={`Squash ${multiCount} commits`} onClick={() => { onAction('squash', commit); onClose() }} />
+          <MenuItem icon={<CherryIcon />} label={`Cherry-pick ${multiCount} commits`} onClick={() => { onAction('cherry-pick-multi', commit); onClose() }} />
           <div className="h-px bg-surface-700/50 my-1" />
         </>
       )}
 
       {!isWip && (
         <>
-          <MenuItem icon={<CheckoutIcon />} label="Checkout este commit"
-            onClick={() => { onAction('checkout', commit); onClose() }} />
-          <MenuItem icon={<BranchIcon />} label="Crear rama aquí..."
-            onClick={() => { onAction('branch', commit); onClose() }} />
+          <MenuItem icon={<CheckoutIcon />} label="Checkout este commit" onClick={() => { onAction('checkout', commit); onClose() }} />
+          <MenuItem icon={<BranchIcon />} label="Crear rama aquí..." onClick={() => { onAction('branch', commit); onClose() }} />
+
+          {localBranch && (
+            <MenuItem 
+              icon={<PinIcon active={isPinned} />} 
+              label={isPinned ? `Unpin rama '${localBranch}'` : `Pin rama '${localBranch}' a la izquierda`} 
+              onClick={() => { onTogglePin(localBranch); onClose() }} 
+            />
+          )}
 
           <div className="h-px bg-surface-700/50 my-1" />
 
@@ -475,29 +605,19 @@ function ContextMenu({ x, y, commit, multiCount, onClose, onAction }) {
                 onMouseLeave={() => setResetOpen(false)}
               >
                 <div className="px-3 py-1 text-[10px] text-slate-600 uppercase tracking-wider font-semibold">Tipo de Reset</div>
-                <MenuItem icon={<SoftIcon />} label="Soft — mantiene staging"
-                  onClick={() => { onAction('reset', commit, 'soft'); onClose() }}
-                  sub="mantiene los cambios en staging area" />
-                <MenuItem icon={<MixedIcon />} label="Mixed — mantiene archivos"
-                  onClick={() => { onAction('reset', commit, 'mixed'); onClose() }}
-                  sub="mantiene los cambios sin stagear" />
-                <MenuItem icon={<HardIcon />} label="Hard — descarta todo ⚠️"
-                  onClick={() => { onAction('reset', commit, 'hard'); onClose() }}
-                  danger sub="destruye todos los cambios" />
+                <MenuItem icon={<SoftIcon />} label="Soft — mantiene staging" onClick={() => { onAction('reset', commit, 'soft'); onClose() }} sub="mantiene los cambios en staging area" />
+                <MenuItem icon={<MixedIcon />} label="Mixed — mantiene archivos" onClick={() => { onAction('reset', commit, 'mixed'); onClose() }} sub="mantiene los cambios sin stagear" />
+                <MenuItem icon={<HardIcon />} label="Hard — descarta todo ⚠️" onClick={() => { onAction('reset', commit, 'hard'); onClose() }} danger sub="destruye todos los cambios" />
               </div>
             )}
           </div>
 
           <div className="h-px bg-surface-700/50 my-1" />
 
-          <MenuItem icon={<MergeIcon />} label={`Merge ${commit.shortHash} en actual`}
-            onClick={() => { onAction('merge', commit); onClose() }} />
-          <MenuItem icon={<RebaseIcon />} label={`Rebase actual sobre ${commit.shortHash}`}
-            onClick={() => { onAction('rebase', commit); onClose() }} />
-          <MenuItem icon={<CherryIcon />} label="Cherry-pick a rama actual"
-            onClick={() => { onAction('cherry-pick', commit); onClose() }} />
-          <MenuItem icon={<RevertIcon />} label="Revertir este commit"
-            onClick={() => { onAction('revert', commit); onClose() }} />
+          <MenuItem icon={<MergeIcon />} label={`Merge ${commit.shortHash} en actual`} onClick={() => { onAction('merge', commit); onClose() }} />
+          <MenuItem icon={<RebaseIcon />} label={`Rebase actual sobre ${commit.shortHash}`} onClick={() => { onAction('rebase', commit); onClose() }} />
+          <MenuItem icon={<CherryIcon />} label="Cherry-pick a rama actual" onClick={() => { onAction('cherry-pick', commit); onClose() }} />
+          <MenuItem icon={<RevertIcon />} label="Revertir este commit" onClick={() => { onAction('revert', commit); onClose() }} />
         </>
       )}
     </div>
@@ -525,31 +645,105 @@ const CheckoutIcon = () => <svg width="14" height="14" viewBox="0 0 24 24" fill=
 const BranchIcon  = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 01-9 9"/></svg>
 const MergeIcon   = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M16 12v-2a4 4 0 00-4-4H4"/><polyline points="12 2 16 6 12 10"/></svg>
 const RebaseIcon  = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 12v2a4 4 0 004 4h12"/><polyline points="16 14 20 18 16 22"/></svg>
-const CherryIcon  = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="8" cy="16" r="4"/><circle cx="16" cy="16" r="4"/><path d="M12 12V4l4 2"/></svg>
-const RevertIcon  = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg>
-const ResetIcon   = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M2.5 2v6h6M21.5 22v-6h-6"/><path d="M22 11.5A10 10 0 003.2 7.2M2 12.5a10 10 0 0018.8 4.2"/></svg>
-const SquashIcon  = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 12h14"/><path d="M5 6h14"/><path d="M5 18h14"/></svg>
-const SoftIcon    = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#34d399" strokeWidth="2"><circle cx="12" cy="12" r="10"/></svg>
-const MixedIcon   = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" strokeWidth="2"><circle cx="12" cy="12" r="10"/></svg>
 const HardIcon    = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f87171" strokeWidth="2"><circle cx="12" cy="12" r="10"/></svg>
+const PinIcon     = ({ active }) => <svg width="14" height="14" viewBox="0 0 24 24" fill={active ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 00-1.11-1.79l-1.78-.9A2 2 0 0115 10.76V6h1a2 2 0 000-4H8a2 2 0 000 4h1v4.76a2 2 0 01-1.11 1.79l-1.78.9A2 2 0 005 15.24Z"/></svg>
 
-// ── Path builder ──────────────────────────────────────────────────────────────
+const LaptopIcon  = () => <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="shrink-0"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+const CloudIcon   = () => <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="shrink-0"><path d="M17.5 19H9a7 7 0 116.71-9h1.79a4.5 4.5 0 110 9Z"/></svg>
 
-function buildPath(x1, y1, x2, y2, type) {
-  if (x1 === x2) return `M ${x1} ${y1} L ${x2} ${y2}`
-  const dy = y2 - y1
-  const absDy = Math.abs(dy)
-  const BEND = ROW_H * 1.5
-  if (absDy <= ROW_H * 3) {
-    const half = dy * 0.5
-    return `M ${x1} ${y1} C ${x1} ${y1 + half}, ${x2} ${y2 - half}, ${x2} ${y2}`
+function RefPill({ item, onDoubleClickBranch }) {
+  if (item.isTag) {
+    return (
+      <span className="inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded-sm font-mono leading-none whitespace-nowrap bg-amber-500/15 text-amber-400 ring-1 ring-amber-500/25">
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="shrink-0"><path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+        {item.name}
+      </span>
+    )
   }
-  if (type === 'branch-from' || type === 'merge-from') {
-    const curveEndY = y1 + BEND
-    return [`M ${x1} ${y1}`, `C ${x1} ${y1 + BEND * 0.4}, ${x2} ${curveEndY - BEND * 0.4}, ${x2} ${curveEndY}`, `L ${x2} ${y2}`].join(' ')
-  }
-  const curveStartY = y2 - BEND
-  return [`M ${x1} ${y1}`, `L ${x1} ${curveStartY}`, `C ${x1} ${curveStartY + BEND * 0.4}, ${x2} ${y2 - BEND * 0.4}, ${x2} ${y2}`].join(' ')
+
+  // Branch
+  return (
+    <span 
+      onDoubleClick={(e) => { 
+        e.stopPropagation()
+        const localBranch = item.originals.find(r => !r.startsWith('remotes/') && !r.startsWith('origin/'))
+        onDoubleClickBranch?.(localBranch || item.name)
+      }} 
+      className={`group relative inline-flex items-center gap-1.5 text-[11px] font-medium px-2 py-1 rounded font-mono leading-none whitespace-nowrap cursor-pointer transition-colors ${
+        item.isHead ? 'bg-brand-600 text-white shadow shadow-brand-500/30'
+        : item.isLocal ? 'bg-brand-600/90 text-white hover:bg-brand-500'
+        : 'bg-surface-700 text-slate-300 hover:bg-surface-600 hover:text-white'
+      }`}
+    >
+      {item.isHead && <span className="font-bold text-[12px] leading-none">✔</span>}
+      {item.isLocal && <LaptopIcon />}
+      {item.isRemote && <CloudIcon />}
+      {item.name}
+    </span>
+  )
+}
+
+// ── Hover Tooltip ─────────────────────────────────────────────────────────────
+
+
+function CommitTooltip({ info }) {
+  const { commit, stats, x, y } = info
+
+  // Keep tooltip on screen
+  const safeX = Math.min(x, window.innerWidth - 300)
+
+  return (
+    <div
+      className="fixed z-50 w-72 bg-surface-800 border border-surface-600 rounded-lg shadow-xl shadow-black/80 py-3 px-4 text-slate-300 pointer-events-none"
+      style={{ top: y, left: safeX }}
+    >
+      <div className="flex items-start gap-3 mb-3">
+        {commit.authorAvatar ? (
+          <img src={commit.authorAvatar} alt="" className="w-10 h-10 rounded-full border border-surface-600 shrink-0 bg-surface-900" />
+        ) : (
+          <div className="w-10 h-10 rounded-full border border-surface-600 shrink-0 bg-surface-700 flex items-center justify-center font-bold text-lg">
+            {commit.authorName?.[0]?.toUpperCase()}
+          </div>
+        )}
+        <div className="min-w-0">
+          <div className="text-white font-medium text-sm leading-tight break-words">{commit.subject}</div>
+          <div className="text-xs text-brand-400 mt-1">{commit.shortHash}</div>
+        </div>
+      </div>
+
+      <div className="text-xs space-y-1 mb-3">
+        <div className="flex justify-between">
+          <span className="text-slate-500">Autor</span>
+          <span className="text-slate-300">{commit.authorName} &lt;{commit.authorEmail}&gt;</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-slate-500">Fecha</span>
+          <span className="text-slate-300">{new Date(commit.date).toLocaleString()}</span>
+        </div>
+      </div>
+
+      {stats ? (
+        <div className="pt-2 border-t border-surface-700">
+          <div className="flex items-center justify-between text-xs font-mono">
+            <span className="text-slate-400">{stats.files} archivos</span>
+            <div className="flex gap-2">
+              <span className="text-emerald-400">+{stats.insertions}</span>
+              <span className="text-red-400">-{stats.deletions}</span>
+            </div>
+          </div>
+          {/* Bar graphic */}
+          <div className="h-1.5 w-full bg-surface-900 rounded-full mt-1.5 flex overflow-hidden">
+            {stats.insertions > 0 && <div className="bg-emerald-500 h-full" style={{ width: `${(stats.insertions / (stats.insertions + stats.deletions)) * 100}%` }} />}
+            {stats.deletions > 0 && <div className="bg-red-500 h-full" style={{ width: `${(stats.deletions / (stats.insertions + stats.deletions)) * 100}%` }} />}
+          </div>
+        </div>
+      ) : (
+        <div className="pt-2 border-t border-surface-700 text-center text-xs text-slate-500 italic">
+          Cargando detalles...
+        </div>
+      )}
+    </div>
+  )
 }
 
 function shortDate(iso) {

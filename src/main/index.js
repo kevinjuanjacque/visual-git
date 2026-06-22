@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron'
 import { join, resolve } from 'path'
 import { existsSync, readFileSync } from 'fs'
 import { createServer } from 'http'
+import crypto from 'crypto'
 import { simpleGit } from 'simple-git'
 import Store from 'electron-store'
 import axios from 'axios'
@@ -263,9 +264,10 @@ ipcMain.handle('git:getLog', async (_e, folderPath) => {
   const raw = await git.raw([
     'log',
     '--all',
-    '--topo-order',
+    '--date-order',
     '--format=%x00%H%x01%P%x01%an%x01%ae%x01%aI%x01%s%x01%D',
-    '--date=iso-strict'
+    '--date=iso-strict',
+    '--shortstat'
   ])
 
   const commits = parseGitLog(raw)
@@ -281,12 +283,58 @@ ipcMain.handle('git:getLog', async (_e, folderPath) => {
 ipcMain.handle('git:getCommitDetail', async (_e, { folderPath, hash }) => {
   const git = simpleGit(folderPath)
 
-  const [show, diff] = await Promise.all([
-    git.raw(['show', '--stat', '--format=%H%n%an%n%ae%n%aI%n%B', hash]),
+  const [metadata, nameStatus, numstat, diff] = await Promise.all([
+    git.raw(['show', '--format=%H%n%an%n%ae%n%aI%n%B', '-s', hash]),
+    git.raw(['show', '--name-status', '--format=', hash]),
+    git.raw(['show', '--numstat', '--format=', hash]),
     git.raw(['show', '--unified=3', hash])
   ])
 
-  return { show, diff }
+  const filesMap = new Map()
+  nameStatus.trim().split('\n').filter(Boolean).forEach(line => {
+    const parts = line.split('\t')
+    const status = parts[0][0] // A, M, D, R
+    const file = parts[parts.length - 1]
+    filesMap.set(file, { file, status, adds: 0, dels: 0 })
+  })
+
+  numstat.trim().split('\n').filter(Boolean).forEach(line => {
+    const parts = line.split('\t')
+    if (parts.length >= 3) {
+      const file = parts[parts.length - 1]
+      if (filesMap.has(file)) {
+        const obj = filesMap.get(file)
+        obj.adds = parseInt(parts[0], 10) || 0
+        obj.dels = parseInt(parts[1], 10) || 0
+      }
+    }
+  })
+
+  return { metadata, files: Array.from(filesMap.values()), diff }
+})
+
+ipcMain.handle('git:getCommitStats', async (_e, { folderPath, hash }) => {
+  const git = simpleGit(folderPath)
+  try {
+    const stat = await git.raw(['show', '--shortstat', '--format=', hash])
+    // output example: " 3 files changed, 45 insertions(+), 1 deletion(-)"
+    const numstat = await git.raw(['show', '--numstat', '--format=', hash])
+    
+    const lines = numstat.trim().split('\n').filter(Boolean)
+    const files = lines.length
+    let insertions = 0
+    let deletions = 0
+
+    for (const line of lines) {
+      const [add, del] = line.split('\t')
+      if (add !== '-') insertions += parseInt(add, 10) || 0
+      if (del !== '-') deletions += parseInt(del, 10) || 0
+    }
+
+    return { files, insertions, deletions, raw: stat.trim() }
+  } catch {
+    return null
+  }
 })
 
 ipcMain.handle('git:getBranches', async (_e, folderPath) => {
@@ -592,8 +640,21 @@ function parseGitLog(raw) {
     .map(entry => entry.trim())
     .filter(Boolean)
     .map(entry => {
+      const parts = entry.split('\n')
+      const metadata = parts[0]
+      const statLine = parts.length > 1 ? parts[1].trim() : ''
+
       const [hash, parentsRaw, authorName, authorEmail, date, subject, refsRaw] =
-        entry.split('\x01')
+        metadata.split('\x01')
+
+      let insertions = 0
+      let deletions = 0
+      if (statLine) {
+        const insMatch = statLine.match(/(\d+)\s+insertion/)
+        const delMatch = statLine.match(/(\d+)\s+deletion/)
+        if (insMatch) insertions = parseInt(insMatch[1], 10)
+        if (delMatch) deletions = parseInt(delMatch[1], 10)
+      }
 
       const parents = parentsRaw?.trim() ? parentsRaw.trim().split(' ') : []
       const refs    = refsRaw?.trim() ?? ''
@@ -601,13 +662,15 @@ function parseGitLog(raw) {
       const branches = []
       const tags     = []
       let isHead     = false
+      let headBranch = ''
 
       if (refs) {
         refs.split(',').forEach(r => {
           const t = r.trim()
           if (t.startsWith('HEAD ->')) {
             isHead = true
-            branches.push(t.replace('HEAD -> ', ''))
+            headBranch = t.replace('HEAD -> ', '').trim()
+            branches.push(headBranch)
           } else if (t === 'HEAD') {
             isHead = true
           } else if (t.startsWith('tag:')) {
@@ -618,18 +681,27 @@ function parseGitLog(raw) {
         })
       }
 
+      let md5 = ''
+      if (authorEmail) {
+        md5 = crypto.createHash('md5').update(authorEmail.trim().toLowerCase()).digest('hex')
+      }
+
       return {
         hash,
         shortHash: hash?.substring(0, 7) ?? '',
         parents,
-        authorName:  authorName  ?? '',
-        authorEmail: authorEmail ?? '',
-        date:        date        ?? '',
-        subject:     subject     ?? '',
+        authorName:  authorName?.trim() ?? '',
+        authorEmail: authorEmail?.trim() ?? '',
+        authorAvatar: md5 ? `https://www.gravatar.com/avatar/${md5}?d=identicon&s=40` : '',
+        date:        date?.trim()        ?? '',
+        subject:     subject?.trim()     ?? '',
+        insertions,
+        deletions,
         refs,
         branches,
         tags,
-        isHead
+        isHead,
+        headBranch
       }
     })
     .filter(c => c.hash)

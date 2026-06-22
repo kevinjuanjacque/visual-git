@@ -3,8 +3,9 @@ import { calculateLayout } from '../utils/graphLayout'
 
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000 // 5 minutos
 
-export function useGitData(repoPath) {
+export function useGitData(repoPath, pinnedBranches = []) {
   const [commits, setCommits]               = useState([])
+  const [rawCommits, setRawCommits]         = useState([])
   const [branches, setBranches]             = useState([])
   const [currentBranch, setCurrentBranch]   = useState('')
   const [loading, setLoading]               = useState(false)
@@ -20,8 +21,7 @@ export function useGitData(repoPath) {
     setError(null)
     try {
       const data = await window.electronAPI.getLog(path)
-      const layoutCommits = calculateLayout(data.commits)
-      setCommits(layoutCommits)
+      setRawCommits(data.commits)
       setBranches(data.branches)
       setCurrentBranch(data.currentBranch)
       const now = new Date()
@@ -34,9 +34,19 @@ export function useGitData(repoPath) {
     }
   }, [])
 
+  // Recalcular layout instantáneamente si cambian los commits crudos o las ramas pineadas
+  useEffect(() => {
+    if (rawCommits.length > 0) {
+      setCommits(calculateLayout(rawCommits, pinnedBranches))
+    } else {
+      setCommits([])
+    }
+  }, [rawCommits, pinnedBranches])
+
   // Fetch inicial y cuando cambia el repo
   useEffect(() => {
     if (!repoPath) {
+      setRawCommits([])
       setCommits([])
       setBranches([])
       setCurrentBranch('')

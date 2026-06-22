@@ -1,198 +1,174 @@
 /**
- * Paleta de colores estilo GitKraken para los lanes del grafo.
- * Col 0 = rama principal (cian), el resto rota entre colores vibrantes.
+ * graphLayout.js
+ * 
+ * Implementación de grafo tipo GitKraken / GitLens.
+ * Calcula el ruteo fila por fila, permitiendo renderizado segmentado (sin SVGs gigantes).
  */
+
 const LANE_COLORS = [
-  '#0ea5e9', // col 0 — cian (main)
-  '#2dd4bf', // teal/verde
+  '#0ea5e9', // cian
+  '#2dd4bf', // teal
   '#a78bfa', // violeta
-  '#f472b6', // rosa/magenta
+  '#f472b6', // rosa
   '#fb923c', // naranja
   '#facc15', // amarillo
   '#34d399', // esmeralda
-  '#f87171', // rojo coral
+  '#f87171', // rojo
   '#60a5fa', // azul claro
   '#c084fc', // púrpura
   '#fbbf24', // ámbar
-  '#4ade80', // verde lima
+  '#4ade80', // lima
 ]
 
 /**
- * Calcula el layout del git graph garantizando:
- *  - Col 0 SIEMPRE es la rama principal (main/master/HEAD)
- *  - Las demás ramas ocupan col 1, 2, 3… en el orden en que aparecen
- *    en el log topológico: commits más recientes → columnas más bajas.
- *  - Asignación inteligente de lanes para minimizar cruces.
- *
- * Algoritmo:
- *  1. Identifica el "main line": cadena first-parent desde HEAD.
- *  2. Pre-reserva col 0 para el primer commit main-line del array.
- *  3. Loop por cada commit:
- *     - Main-line  → forzado a col 0.
- *     - No-main    → primer slot libre en col ≥ 1, preferentemente
- *       adyacente al padre para reducir cruces.
- *  4. Genera `activeLanes` (snapshot antes de modificar) para las
- *     pass-through lines del SVG.
+ * Calcula el layout por segmentos.
+ * @param {Array} commits - Lista de commits en orden topológico inverso (más nuevo primero).
+ * @param {Array} pinnedBranches - Nombres de ramas a mantener fijas a la izquierda ['main', 'dev'].
  */
-export function calculateLayout(commits) {
+export function calculateLayout(commits, pinnedBranches = []) {
   if (!commits?.length) return []
 
-  const commitMap = new Map(commits.map(c => [c.hash, c]))
+  const pinnedSets = []
+  for (const branch of pinnedBranches) {
+    let head = commits.find(c => c.branches?.includes(branch))
+    if (!head && branch.startsWith('origin/')) {
+      head = commits.find(c => c.branches?.includes(branch.replace('origin/', 'remotes/origin/')))
+    }
+    if (head) {
+      const set = new Set()
+      let cur = head
+      while (cur && !set.has(cur.hash)) {
+        set.add(cur.hash)
+        cur = cur.parents?.[0] ? commits.find(c => c.hash === cur.parents[0]) : null
+      }
+      pinnedSets.push({ branch, set, col: pinnedSets.length })
+    }
+  }
 
-  // ── 1. Identifica la línea principal (first-parent desde HEAD) ──────────
-  const mainSet = buildMainLine(commits, commitMap)
+  function getPinnedCol(hash) {
+    for (const p of pinnedSets) {
+      if (p.set.has(hash)) return p.col
+    }
+    return -1
+  }
 
-  // ── 2. Pre-seed: reserva col 0 para el primer commit main del array ─────
-  const firstMain = commits.find(c => mainSet.has(c.hash))
-  const lanes = firstMain ? [firstMain.hash] : [null]
+  const lanes = [] // Array of { hash, colorIdx }
+  const colorAssignment = new Map()
+  let maxColsUsed = 0
 
   const result = []
 
   for (const commit of commits) {
-    // ── Libera lanes reservados para este commit ──────────────────────────
+    const isWip = commit.isWip
+
+    // Snapshot of lanes entering this row from the top
+    const activeLanes = lanes.map(lane => {
+      if (!lane) return null
+      return { hash: lane.hash, colorIdx: lane.colorIdx }
+    })
+
+    let col = -1
+    const pinnedCol = getPinnedCol(commit.hash)
+
+    // Find all incoming lanes that carry this commit
+    const incomingCols = []
     for (let i = 0; i < lanes.length; i++) {
-      if (lanes[i] === 'reserved:' + commit.hash) {
-        lanes[i] = null
-      }
+      if (lanes[i]?.hash === commit.hash) incomingCols.push(i)
     }
 
-    // Snapshot ANTES de modificar lanes → para pass-through lines en el SVG
-    const activeLanes = [...lanes]
-    const isMain = mainSet.has(commit.hash)
-    let col
-
-    // ── Asigna columna ────────────────────────────────────────────────────
-    if (isMain) {
-      col = 0
-      if (!lanes[0] || lanes[0] !== commit.hash) lanes[0] = commit.hash
+    if (pinnedCol !== -1) {
+      col = pinnedCol
+    } else if (incomingCols.length > 0) {
+      col = incomingCols[0]
     } else {
-      col = -1
-      // Busca si este commit ya tiene un lane reservado
-      for (let i = 1; i < lanes.length; i++) {
-        if (lanes[i] === commit.hash) { col = i; break }
+      let free = -1
+      for (let i = 0; i < lanes.length; i++) {
+        if (!lanes[i] && !pinnedSets.some(p => p.col === i)) { free = i; break; }
       }
-      if (col === -1) {
-        // Busca el slot libre más cercano a col 1 (preferir columnas bajas)
-        let free = -1
-        for (let i = 1; i < lanes.length; i++) {
-          if (!lanes[i]) { free = i; break }
-        }
-        col = free !== -1 ? free : Math.max(1, lanes.length)
-        while (lanes.length <= col) lanes.push(null)
-        lanes[col] = commit.hash
+      if (free === -1) {
+        free = lanes.length
+        while (pinnedSets.some(p => p.col === free)) free++
       }
+      col = free
+    }
+    while (lanes.length <= col) lanes.push(null)
+
+    if (!colorAssignment.has(commit.hash)) {
+      if (incomingCols.length > 0) colorAssignment.set(commit.hash, lanes[incomingCols[0]].colorIdx)
+      else colorAssignment.set(commit.hash, col)
     }
 
-    // ── Procesa padres ────────────────────────────────────────────────────
-    const connections = []
+    // Incoming connections (bend at Parent)
+    const incomingConnections = incomingCols.filter(ic => ic !== col).map(ic => ({
+      fromCol: ic,
+      colorIdx: lanes[ic].colorIdx
+    }))
 
-    if (commit.parents.length === 0) {
-      lanes[col] = null
-    } else {
-      const [p0hash, ...extraParents] = commit.parents
-      const p0IsMain    = mainSet.has(p0hash)
-      const p0ExistCol  = lanes.indexOf(p0hash)
+    // Consume incoming lanes
+    for (const ic of incomingCols) {
+      lanes[ic] = null
+    }
 
-      // — Primer padre ────────────────────────────────────────────────────
-      if (isMain && p0IsMain) {
-        // main → main: permanece en col 0
-        lanes[0] = p0hash
-        connections.push({ fromCol: 0, toCol: 0, toHash: p0hash, type: 'continue' })
+    const outgoingConnections = []
 
-      } else if (!isMain && p0IsMain) {
-        // Rama lateral cuyo padre es main (divergencia o fin de rama)
-        lanes[col] = 'reserved:' + p0hash
-        connections.push({ fromCol: col, toCol: 0, toHash: p0hash, type: 'merge-to' })
+    if (commit.parents?.length > 0) {
+      for (let i = 0; i < commit.parents.length; i++) {
+        const pHash = commit.parents[i]
 
-      } else if (p0ExistCol !== -1) {
-        if (p0ExistCol === col) {
-          connections.push({ fromCol: col, toCol: col, toHash: p0hash, type: 'continue' })
-        } else {
-          lanes[col] = 'reserved:' + p0hash
-          connections.push({ fromCol: col, toCol: p0ExistCol, toHash: p0hash, type: 'merge-to' })
+        let existingCol = -1
+        for (let j = 0; j < lanes.length; j++) {
+          if (lanes[j]?.hash === pHash) { existingCol = j; break; }
         }
-      } else {
-        lanes[col] = p0hash
-        connections.push({ fromCol: col, toCol: col, toHash: p0hash, type: 'continue' })
-      }
 
-      // — Padres adicionales (merge commits) ──────────────────────────────
-      for (const ph of extraParents) {
-        const phIsMain   = mainSet.has(ph)
-        const phExistCol = lanes.indexOf(ph)
-
-        if (phExistCol !== -1) {
-          connections.push({ fromCol: col, toCol: phExistCol, toHash: ph, type: 'merge-from' })
-        } else if (phIsMain) {
-          if (!lanes[0]) lanes[0] = ph
-          connections.push({ fromCol: col, toCol: 0, toHash: ph, type: 'merge-from' })
+        if (i === 0) {
+          // First parent ALWAYS continues in same column, deferring bend to parent
+          lanes[col] = { hash: pHash, colorIdx: colorAssignment.get(commit.hash) }
+          if (!colorAssignment.has(pHash)) colorAssignment.set(pHash, colorAssignment.get(commit.hash))
         } else {
-          // Buscar slot libre adyacente al commit actual para reducir cruces
-          let free = findBestFreeSlot(lanes, col)
-          const newCol = free !== -1 ? free : Math.max(1, lanes.length)
-          while (lanes.length <= newCol) lanes.push(null)
-          lanes[newCol] = ph
-          connections.push({ fromCol: col, toCol: newCol, toHash: ph, type: 'branch-from' })
+          if (existingCol !== -1) {
+            // Merge parent is already active. Bend out from Child immediately.
+            outgoingConnections.push({ toCol: existingCol, colorIdx: lanes[existingCol].colorIdx })
+          } else {
+            // Merge parent not active. Create new lane and bend out.
+            let free = -1
+            for (let j = 0; j < lanes.length; j++) {
+              if (!lanes[j] && !pinnedSets.some(p => p.col === j)) { free = j; break; }
+            }
+            if (free === -1) {
+              free = lanes.length
+              while (pinnedSets.some(p => p.col === free)) free++
+            }
+            while (lanes.length <= free) lanes.push(null)
+
+            if (!colorAssignment.has(pHash)) colorAssignment.set(pHash, free)
+            lanes[free] = { hash: pHash, colorIdx: colorAssignment.get(pHash) }
+
+            outgoingConnections.push({ toCol: free, colorIdx: colorAssignment.get(pHash) })
+          }
         }
       }
     }
 
-    // Limpia nulls al final (mantiene mínimo col 0)
-    while (lanes.length > 1 && lanes[lanes.length - 1] === null) lanes.pop()
+    while (lanes.length > 0 && lanes[lanes.length - 1] === null) {
+      lanes.pop()
+    }
+
+    maxColsUsed = Math.max(maxColsUsed, lanes.length, col + 1)
 
     result.push({
       ...commit,
       col,
-      connections,
       activeLanes,
-      color:     LANE_COLORS[col % LANE_COLORS.length],
-      totalCols: Math.max(lanes.length, col + 1)
+      incomingConnections,
+      outgoingConnections,
+      color: isWip ? '#94a3b8' : LANE_COLORS[colorAssignment.get(commit.hash) % LANE_COLORS.length],
+      totalCols: maxColsUsed
     })
   }
 
+  for (const r of result) r.totalCols = maxColsUsed
+
   return result
-}
-
-// ── Helpers ────────────────────────────────────────────────────────────────
-
-const MAIN_NAMES = new Set(['main', 'master', 'trunk', 'develop'])
-
-/**
- * Construye el Set de hashes que forman la "main line":
- * cadena first-parent desde el commit HEAD (o main/master).
- */
-function buildMainLine(commits, commitMap) {
-  const set = new Set()
-
-  let head = commits.find(c => c.isHead)
-  if (!head) head = commits.find(c => c.branches?.some(b => MAIN_NAMES.has(b)))
-  if (!head) head = commits[0]
-  if (!head) return set
-
-  let cur = head
-  const visited = new Set()
-  while (cur && !visited.has(cur.hash)) {
-    visited.add(cur.hash)
-    set.add(cur.hash)
-    cur = cur.parents[0] ? commitMap.get(cur.parents[0]) : null
-  }
-
-  return set
-}
-
-/**
- * Busca el slot libre más cercano a `targetCol` para minimizar cruces.
- * Prioriza slots adyacentes (targetCol+1, targetCol-1, etc.)
- */
-function findBestFreeSlot(lanes, targetCol) {
-  // Primero intenta slots cercanos al target
-  for (let dist = 1; dist < lanes.length + 2; dist++) {
-    const right = targetCol + dist
-    if (right >= 1 && right < lanes.length && !lanes[right]) return right
-    const left = targetCol - dist
-    if (left >= 1 && left < lanes.length && !lanes[left]) return left
-  }
-  return -1
 }
 
 export { LANE_COLORS }
