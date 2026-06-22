@@ -428,7 +428,7 @@ function WipPanel({ repoPath, staged, unstaged, untracked, conflictedFiles = [],
   async function handleDiscard(filePath) {
     if (!window.confirm(`¿Descarta los cambios en "${filePath}"? Esta acción no se puede deshacer.`)) return
     try {
-      await window.electronAPI.checkout({ folderPath: repoPath, branch: `-- ${filePath}` })
+      await window.electronAPI.discardFile({ folderPath: repoPath, file: filePath })
       onRefreshStatus?.()
     } catch { /* ignore */ }
   }

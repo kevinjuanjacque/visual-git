@@ -525,6 +525,19 @@ ipcMain.handle('git:unstage', async (_e, { folderPath, files }) => {
   }
 })
 
+ipcMain.handle('git:discardFile', async (_e, { folderPath, file }) => {
+  try {
+    const git = simpleGit(folderPath)
+    // Para archivos trackeados modificados (staged o unstaged)
+    await git.checkout(['--', file]).catch(() => {})
+    // Para archivos untracked
+    await git.clean('f', ['--', file]).catch(() => {})
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: err.message }
+  }
+})
+
 ipcMain.handle('git:commit', async (_e, { folderPath, summary, description }) => {
   try {
     const git = simpleGit(folderPath)

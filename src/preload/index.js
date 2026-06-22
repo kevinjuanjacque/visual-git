@@ -42,6 +42,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   stashDrop:       (data)         => ipcRenderer.invoke('git:stashDrop', data),
   stage:           (data)         => ipcRenderer.invoke('git:stage', data),
   unstage:         (data)         => ipcRenderer.invoke('git:unstage', data),
+  discardFile:     (data)         => ipcRenderer.invoke('git:discardFile', data),
   gitCommit:       (data)         => ipcRenderer.invoke('git:commit', data),
   reset:           (data)         => ipcRenderer.invoke('git:reset', data),
   cherryPick:      (data)         => ipcRenderer.invoke('git:cherryPick', data),
