@@ -56,5 +56,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ── Store ─────────────────────────────────────────────────────────────────
   getRepos:   ()     => ipcRenderer.invoke('store:getRepos'),
   addRepo:    (path) => ipcRenderer.invoke('store:addRepo', path),
-  removeRepo: (path) => ipcRenderer.invoke('store:removeRepo', path)
+  removeRepo: (path) => ipcRenderer.invoke('store:removeRepo', path),
+
+  // ── System ────────────────────────────────────────────────────────────────
+  openInVSCode: (path) => ipcRenderer.invoke('system:openInVSCode', path)
 })

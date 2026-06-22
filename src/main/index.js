@@ -729,3 +729,16 @@ function parseGitLog(raw) {
     })
     .filter(c => c.hash)
 }
+
+ipcMain.handle('system:openInVSCode', async (_e, folderPath) => {
+  const { exec } = require('child_process')
+  return new Promise((resolve) => {
+    exec('code .', { cwd: folderPath }, (error) => {
+      if (error) {
+        resolve({ ok: false, error: error.message })
+      } else {
+        resolve({ ok: true })
+      }
+    })
+  })
+})

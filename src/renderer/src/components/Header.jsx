@@ -4,7 +4,8 @@ import { formatDistanceToNow } from '../utils/time'
 export default function Header({
   user, repoPath, loading, lastRefresh, nextRefresh,
   hasWip, onRefresh, onOpenRepo, onLogout,
-  onPull, onPush, onStash, onNewBranch
+  onPull, onPush, onStash, onNewBranch,
+  onOpenInVSCode
 }) {
   const [countdown,   setCountdown]   = useState('')
   const [busy,        setBusy]        = useState('')   // 'pull' | 'push' | 'stash' | ''
@@ -208,6 +209,19 @@ export default function Header({
           </svg>
           Abrir repo
         </button>
+
+        {repoPath && (
+          <button
+            onClick={onOpenInVSCode}
+            className="no-drag px-3 py-1.5 text-[11px] font-medium rounded-md bg-[#0066b8]/20 hover:bg-[#0066b8]/40 text-[#3b99fc] transition-colors flex items-center gap-1.5 border border-[#0066b8]/30"
+            title="Abrir este repositorio en VS Code"
+          >
+            <svg width="14" height="14" viewBox="0 0 256 256" fill="currentColor">
+              <path d="M190.5 45.4c-1.7-1.3-4.1-1.3-5.8 0L49 146.5l-24.9-20.9c-2-1.7-5-1.5-6.7.5s-1.5 5 .5 6.7l29 24.4c.9.8 2 1.2 3.2 1.2 1.3 0 2.6-.5 3.5-1.5L181 50.8v154.5l-44.5-35.4c-1.9-1.5-4.8-1.2-6.3.8-1.5 1.9-1.2 4.8.8 6.3l50 39.8c1 .8 2.2 1.2 3.4 1.2s2.4-.4 3.4-1.2l61.5-51.5c1.4-1.2 2.2-2.9 2.2-4.8V53c0-1.8-.8-3.6-2.2-4.8l-61.5-51.5c-1.8-1.5-4.6-1.5-6.4 0l-54 45.2-12-10c-1.9-1.6-4.8-1.3-6.4.6-1.6 1.9-1.3 4.8.6 6.4l15 12.6 131.6-110.1v154.4L55.5 44 40.5 56.6c-1.9 1.6-2.2 4.5-.6 6.4 1.6 1.9 4.5 2.2 6.4.6l12-10 50.2-42c2.1-1.8 5.3-1.6 7.2.5 1.8 2.1 1.6 5.3-.5 7.2l-33.1 27.7L215 158.4V45.4H190.5z" />
+            </svg>
+            VS Code
+          </button>
+        )}
 
         {user && (
           <div className="flex items-center gap-2">

@@ -182,8 +182,11 @@ function HistoricPanel({ commit, repoPath, onFileClick }) {
 // ── WIP Staging Panel ────────────────────────────────────────────────────────
 
 function WipPanel({ repoPath, staged, unstaged, untracked, conflictedFiles = [], onStageFiles, onUnstageFiles, onCommit, onRefreshStatus, onFileClick }) {
-  const [summary,     setSummary]     = useState('')
-  const [description, setDescription] = useState('')
+  const [commitType,    setCommitType]    = useState('feat')
+  const [commitScope,   setCommitScope]   = useState('')
+  const [commitSubject, setCommitSubject] = useState('')
+  const [commitBody,    setCommitBody]    = useState('')
+  const [isBreaking,    setIsBreaking]    = useState(false)
   const [committing,  setCommitting]  = useState(false)
   const [selectedFile, setSelectedFile] = useState(null)
   const [selectedFiles, setSelectedFiles] = useState(new Set()) // multi-select
@@ -215,11 +218,15 @@ function WipPanel({ repoPath, staged, unstaged, untracked, conflictedFiles = [],
   }
 
   async function handleCommit() {
-    if (!summary.trim() || staged.length === 0) return
+    if (!commitSubject.trim() || staged.length === 0) return
     setCommitting(true)
-    await onCommit?.(summary.trim(), description.trim())
-    setSummary('')
-    setDescription('')
+    const summary = `${commitType}${commitScope.trim() ? `(${commitScope.trim()})` : ''}${isBreaking ? '!' : ''}: ${commitSubject.trim()}`
+    const description = commitBody.trim()
+    await onCommit?.(summary, description)
+    setCommitSubject('')
+    setCommitScope('')
+    setCommitBody('')
+    setIsBreaking(false)
     setCommitting(false)
   }
 
@@ -339,25 +346,63 @@ function WipPanel({ repoPath, staged, unstaged, untracked, conflictedFiles = [],
           )}
         </div>
 
-        {/* ── Commit Form ── */}
-        <div className="mt-auto border-t border-surface-700/60 p-3 shrink-0">
+        {/* ── Conventional Commit Form ── */}
+        <div className="mt-auto border-t border-surface-700/60 p-3 shrink-0 bg-surface-850">
+          <div className="flex items-center gap-2 mb-2">
+            <select
+              value={commitType}
+              onChange={e => setCommitType(e.target.value)}
+              className="bg-surface-900 border border-surface-600 rounded-md px-2 py-1.5 text-[12px] text-slate-200 focus:outline-none focus:border-brand-500 transition-colors w-[90px] shrink-0"
+            >
+              <option value="feat">feat</option>
+              <option value="fix">fix</option>
+              <option value="docs">docs</option>
+              <option value="style">style</option>
+              <option value="refactor">refactor</option>
+              <option value="perf">perf</option>
+              <option value="test">test</option>
+              <option value="build">build</option>
+              <option value="ci">ci</option>
+              <option value="chore">chore</option>
+              <option value="revert">revert</option>
+            </select>
+            <input
+              value={commitScope}
+              onChange={e => setCommitScope(e.target.value)}
+              placeholder="scope (opc)"
+              className="flex-1 bg-surface-900 border border-surface-600 rounded-md px-2 py-1.5 text-[12px] text-slate-200 placeholder-slate-600 focus:outline-none focus:border-brand-500 transition-colors"
+            />
+          </div>
           <input
-            value={summary}
-            onChange={e => setSummary(e.target.value)}
+            value={commitSubject}
+            onChange={e => setCommitSubject(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) handleCommit() }}
-            placeholder="Resumen del commit (requerido)"
-            className="w-full bg-surface-900 border border-surface-600 rounded-md px-3 py-2 text-[12px] text-slate-200 placeholder-slate-600 focus:outline-none focus:border-brand-500 transition-colors mb-2"
+            placeholder="Sujeto del commit (requerido)"
+            className="w-full bg-surface-900 border border-surface-600 rounded-md px-3 py-1.5 text-[12px] text-slate-200 placeholder-slate-600 focus:outline-none focus:border-brand-500 transition-colors mb-2"
           />
           <textarea
-            value={description}
-            onChange={e => setDescription(e.target.value)}
-            placeholder="Descripción (opcional)"
+            value={commitBody}
+            onChange={e => setCommitBody(e.target.value)}
+            placeholder="Descripción extendida (opcional)"
             rows={2}
-            className="w-full bg-surface-900 border border-surface-600 rounded-md px-3 py-2 text-[12px] text-slate-200 placeholder-slate-600 focus:outline-none focus:border-brand-500 transition-colors mb-2 resize-none"
+            className="w-full bg-surface-900 border border-surface-600 rounded-md px-3 py-1.5 text-[12px] text-slate-200 placeholder-slate-600 focus:outline-none focus:border-brand-500 transition-colors mb-2 resize-none"
           />
+          <div className="flex items-center gap-2 mb-3">
+            <input
+              type="checkbox"
+              id="breaking-change"
+              checked={isBreaking}
+              onChange={e => setIsBreaking(e.target.checked)}
+              className="accent-brand-500 rounded cursor-pointer"
+            />
+            <label htmlFor="breaking-change" className="text-[11px] text-red-400 cursor-pointer select-none font-medium">
+              ⚠️ Breaking Change
+            </label>
+          </div>
+
           <button
             onClick={handleCommit}
-            disabled={!summary.trim() || staged.length === 0 || committing || conflictedFiles.length > 0}
+            disabled={!commitSubject.trim() || staged.length === 0 || committing || conflictedFiles.length > 0}
             className="w-full py-2 text-sm font-semibold rounded-lg transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed
               bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white shadow-lg shadow-emerald-900/30"
           >
@@ -366,7 +411,7 @@ function WipPanel({ repoPath, staged, unstaged, untracked, conflictedFiles = [],
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="animate-spin"><path d="M21 12a9 9 0 11-6.219-8.56"/></svg>
                   Commiteando...
                 </span>
-              : `Commit Changes (${staged.length} archivo${staged.length !== 1 ? 's' : ''})`
+              : `Commit (${staged.length} archivo${staged.length !== 1 ? 's' : ''})`
             }
           </button>
           {conflictedFiles.length > 0 && (

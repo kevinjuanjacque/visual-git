@@ -319,6 +319,13 @@ export default function App() {
           )
           refresh()
         }}
+        onOpenInVSCode={async () => {
+          if (!currentRepo) return
+          const res = await window.electronAPI.openInVSCode(currentRepo)
+          if (!res?.ok) {
+            setErrors(prev => [...prev, { id: Date.now(), msg: `Error abriendo VS Code: ${res?.error}` }])
+          }
+        }}
       />
 
       {/* Banners: Conflict mode and Detached HEAD */}
