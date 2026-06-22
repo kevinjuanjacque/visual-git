@@ -283,11 +283,33 @@ ipcMain.handle('git:getLog', async (_e, folderPath) => {
 ipcMain.handle('git:getCommitDetail', async (_e, { folderPath, hash }) => {
   const git = simpleGit(folderPath)
 
+  const isRange = hash.includes('..')
+
+  // If oldest^..newest fails (e.g. oldest is initial commit), we can just try catching and fallback.
+  // But simpleGit throws if command fails. We'll handle it outside if we want, or just let it fail.
+  // We'll use raw commands depending on if it's a range.
+  const getRaw = async (cmdRange, cmdSingle) => {
+    try {
+      return await git.raw(isRange ? cmdRange : cmdSingle)
+    } catch (err) {
+      if (isRange && err.message.includes('bad revision')) {
+        // Fallback for initial commit parent failure: compare empty tree to newest
+        const newest = hash.split('..')[1] || hash
+        const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'
+        const fallbackCmd = cmdRange.map(a => a === hash ? `${EMPTY_TREE}..${newest}` : a)
+        return await git.raw(fallbackCmd)
+      }
+      throw err
+    }
+  }
+
   const [metadata, nameStatus, numstat, diff] = await Promise.all([
-    git.raw(['show', '--format=%H%n%an%n%ae%n%aI%n%B', '-s', hash]),
-    git.raw(['show', '--name-status', '--format=', hash]),
-    git.raw(['show', '--numstat', '--format=', hash]),
-    git.raw(['show', '--unified=3', hash])
+    isRange 
+      ? Promise.resolve(`${hash}\nMulti\nmulti@example.com\n\nSelección múltiple: Diff combinado`) 
+      : git.raw(['show', '--format=%H%n%an%n%ae%n%aI%n%B', '-s', hash]),
+    getRaw(['diff', '--name-status', hash], ['show', '--name-status', '--format=', hash]),
+    getRaw(['diff', '--numstat', hash], ['show', '--numstat', '--format=', hash]),
+    getRaw(['diff', '--unified=3', hash], ['show', '--unified=3', hash])
   ])
 
   const filesMap = new Map()
@@ -561,7 +583,8 @@ ipcMain.handle('git:getFileDiff', async (_e, { folderPath, file, cached, commitH
     let diff
     if (commitHash && commitHash !== 'WIP') {
       // diff for a specific historical commit file
-      diff = await git.raw(['diff', '--unified=3', `${commitHash}^..${commitHash}`, '--', file])
+      const range = commitHash.includes('..') ? commitHash : `${commitHash}^..${commitHash}`
+      diff = await git.raw(['diff', '--unified=3', range, '--', file])
     } else {
       const args = ['diff', '--unified=3']
       if (cached) args.push('--cached')

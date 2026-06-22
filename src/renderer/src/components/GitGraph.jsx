@@ -135,6 +135,35 @@ export default function GitGraph({
           if (next.has(commit.hash)) next.delete(commit.hash)
           else next.add(commit.hash)
         }
+        const newSize = next.size
+        if (newSize > 1) {
+          const indices = Array.from(next).map(h => filtered.findIndex(c => c.hash === h)).filter(i => i >= 0).sort((a,b) => a - b)
+          if (indices.length > 0) {
+            const newest = filtered[indices[0]] // lower index = newer
+            const oldest = filtered[indices[indices.length - 1]]
+            // Use oldest.hash^..newest.hash to include oldest commit's changes
+            const range = `${oldest.hash}^..${newest.hash}`
+            
+            // Defers the call to avoid state-update collision? It should be fine directly.
+            setTimeout(() => {
+              onSelectCommit({
+                hash: range,
+                shortHash: `${oldest.shortHash}..${newest.shortHash}`,
+                subject: `Diff combinado (${newSize} commits)`,
+                authorName: 'Multi-select',
+                date: newest.date,
+                isMulti: true
+              })
+            }, 0)
+          }
+        } else if (newSize === 1) {
+          const singleHash = Array.from(next)[0]
+          const c = filtered.find(c => c.hash === singleHash)
+          if (c) setTimeout(() => onSelectCommit(c), 0)
+        } else {
+          setTimeout(() => onSelectCommit(null), 0)
+        }
+
         return next
       })
     } else {
