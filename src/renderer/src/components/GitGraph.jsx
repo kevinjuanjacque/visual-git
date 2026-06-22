@@ -326,6 +326,10 @@ function CommitRow({ commit, svgW, colWidths, isSelected, onClick, onContextMenu
     if (isWip) return []
     const groups = new Map()
     commit.branches?.forEach(b => {
+      if (b.includes('refs/stash')) {
+        if (!groups.has('refs/stash')) groups.set('refs/stash', { name: 'refs/stash', isStash: true, isLocal: false, isRemote: false, isHead: false, originals: [b] })
+        return
+      }
       const isRemote = b.startsWith('remotes/') || b.startsWith('origin/')
       const name = b.replace(/^remotes\/[^/]+\//, '').replace(/^origin\//, '')
       if (!groups.has(name)) groups.set(name, { name, isLocal: false, isRemote: false, isHead: false, originals: [] })
@@ -502,6 +506,8 @@ function GraphSegmentSvg({ commit, svgW, onMouseEnterNode, onMouseLeaveNode }) {
   })
 
   // 3. The node itself
+  const isStashCommit = commit.branches?.some(b => b.includes('refs/stash'))
+
   if (isWip) {
     elements.push(
       <rect 
@@ -510,6 +516,20 @@ function GraphSegmentSvg({ commit, svgW, onMouseEnterNode, onMouseLeaveNode }) {
         onMouseEnter={onMouseEnterNode}
         onMouseLeave={onMouseLeaveNode}
       />
+    )
+  } else if (isStashCommit) {
+    elements.push(
+      <g 
+        key="stash-node"
+        className="pointer-events-auto cursor-pointer transition-colors hover:opacity-80"
+        onMouseEnter={onMouseEnterNode}
+        onMouseLeave={onMouseLeaveNode}
+      >
+        <rect x={cx - 7} y={cy - 7} width="14" height="14" fill="#0f172a" stroke={color} strokeWidth="1.5" strokeDasharray="2 1.5" rx="2" />
+        <svg x={cx - 5} y={cy - 5} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.5">
+          <path d="M4 8h16M4 8v12a2 2 0 002 2h12a2 2 0 002-2V8M4 8l1.6-4.8A2 2 0 017.5 2h9a2 2 0 011.9 1.2L20 8"/><path d="M10 12h4v2h-4z"/>
+        </svg>
+      </g>
     )
   } else {
     if (commit.isHead) {
@@ -603,50 +623,61 @@ function ContextMenu({ x, y, commit, multiCount, pinnedBranches, onTogglePin, on
 
       {!isWip && (
         <>
-          <MenuItem icon={<CheckoutIcon />} label="Checkout este commit" onClick={() => { onAction('checkout', commit); onClose() }} />
-          <MenuItem icon={<BranchIcon />} label="Crear rama aquí..." onClick={() => { onAction('branch', commit); onClose() }} />
+          {commit.branches?.some(b => b.includes('refs/stash')) ? (
+            <>
+              <MenuItem icon={<StashDrawerIcon />} label="Apply Stash..." onClick={() => { onAction('stashApply', commit); onClose() }} />
+              <MenuItem icon={<StashDrawerIcon />} label="Drop Stash..." onClick={() => { onAction('stashDrop', commit); onClose() }} danger />
+              <MenuItem icon={<StashDrawerIcon />} label="Rename Stash..." onClick={() => { window.alert('Esta función aún no está implementada.'); onClose() }} />
+              <MenuItem icon={<StashDrawerIcon />} label="Create Patch..." onClick={() => { window.alert('Esta función aún no está implementada.'); onClose() }} />
+            </>
+          ) : (
+            <>
+              <MenuItem icon={<CheckoutIcon />} label="Checkout este commit" onClick={() => { onAction('checkout', commit); onClose() }} />
+              <MenuItem icon={<BranchIcon />} label="Crear rama aquí..." onClick={() => { onAction('branch', commit); onClose() }} />
 
-          {localBranch && (
-            <MenuItem 
-              icon={<PinIcon active={isPinned} />} 
-              label={isPinned ? `Unpin rama '${localBranch}'` : `Pin rama '${localBranch}' a la izquierda`} 
-              onClick={() => { onTogglePin(localBranch); onClose() }} 
-            />
-          )}
+              {localBranch && (
+                <MenuItem 
+                  icon={<PinIcon active={isPinned} />} 
+                  label={isPinned ? `Unpin rama '${localBranch}'` : `Pin rama '${localBranch}' a la izquierda`} 
+                  onClick={() => { onTogglePin(localBranch); onClose() }} 
+                />
+              )}
 
-          <div className="h-px bg-surface-700/50 my-1" />
+              <div className="h-px bg-surface-700/50 my-1" />
 
-          {/* Reset con submenú */}
-          <div className="relative">
-            <button
-              onMouseEnter={() => setResetOpen(true)}
-              onMouseLeave={() => setResetOpen(false)}
-              className="w-full flex items-center gap-2.5 px-3 py-1.5 hover:bg-surface-700 transition-colors text-left"
-            >
-              <span className="shrink-0 opacity-70"><ResetIcon /></span>
-              <span className="truncate text-xs flex-1">Reset rama actual a este commit</span>
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 18 15 12 9 6"/></svg>
-            </button>
-            {resetOpen && (
-              <div
-                className="absolute left-full top-0 ml-1 w-52 bg-surface-800 border border-surface-700/60 rounded-lg shadow-xl py-1"
-                onMouseEnter={() => setResetOpen(true)}
-                onMouseLeave={() => setResetOpen(false)}
-              >
-                <div className="px-3 py-1 text-[10px] text-slate-600 uppercase tracking-wider font-semibold">Tipo de Reset</div>
-                <MenuItem icon={<SoftIcon />} label="Soft — mantiene staging" onClick={() => { onAction('reset', commit, 'soft'); onClose() }} sub="mantiene los cambios en staging area" />
-                <MenuItem icon={<MixedIcon />} label="Mixed — mantiene archivos" onClick={() => { onAction('reset', commit, 'mixed'); onClose() }} sub="mantiene los cambios sin stagear" />
-                <MenuItem icon={<HardIcon />} label="Hard — descarta todo ⚠️" onClick={() => { onAction('reset', commit, 'hard'); onClose() }} danger sub="destruye todos los cambios" />
+              {/* Reset con submenú */}
+              <div className="relative">
+                <button
+                  onMouseEnter={() => setResetOpen(true)}
+                  onMouseLeave={() => setResetOpen(false)}
+                  className="w-full flex items-center gap-2.5 px-3 py-1.5 hover:bg-surface-700 transition-colors text-left"
+                >
+                  <span className="shrink-0 opacity-70"><ResetIcon /></span>
+                  <span className="truncate text-xs flex-1">Reset rama actual a este commit</span>
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 18 15 12 9 6"/></svg>
+                </button>
+                {resetOpen && (
+                  <div
+                    className="absolute left-full top-0 ml-1 w-52 bg-surface-800 border border-surface-700/60 rounded-lg shadow-xl py-1"
+                    onMouseEnter={() => setResetOpen(true)}
+                    onMouseLeave={() => setResetOpen(false)}
+                  >
+                    <div className="px-3 py-1 text-[10px] text-slate-600 uppercase tracking-wider font-semibold">Tipo de Reset</div>
+                    <MenuItem icon={<SoftIcon />} label="Soft — mantiene staging" onClick={() => { onAction('reset', commit, 'soft'); onClose() }} sub="mantiene los cambios en staging area" />
+                    <MenuItem icon={<MixedIcon />} label="Mixed — mantiene archivos" onClick={() => { onAction('reset', commit, 'mixed'); onClose() }} sub="mantiene los cambios sin stagear" />
+                    <MenuItem icon={<HardIcon />} label="Hard — descarta todo ⚠️" onClick={() => { onAction('reset', commit, 'hard'); onClose() }} danger sub="destruye todos los cambios" />
+                  </div>
+                )}
               </div>
-            )}
-          </div>
 
-          <div className="h-px bg-surface-700/50 my-1" />
+              <div className="h-px bg-surface-700/50 my-1" />
 
-          <MenuItem icon={<MergeIcon />} label={`Merge ${commit.shortHash} en actual`} onClick={() => { onAction('merge', commit); onClose() }} />
-          <MenuItem icon={<RebaseIcon />} label={`Rebase actual sobre ${commit.shortHash}`} onClick={() => { onAction('rebase', commit); onClose() }} />
-          <MenuItem icon={<CherryIcon />} label="Cherry-pick a rama actual" onClick={() => { onAction('cherry-pick', commit); onClose() }} />
-          <MenuItem icon={<RevertIcon />} label="Revertir este commit" onClick={() => { onAction('revert', commit); onClose() }} />
+              <MenuItem icon={<MergeIcon />} label={`Merge ${commit.shortHash} en actual`} onClick={() => { onAction('merge', commit); onClose() }} />
+              <MenuItem icon={<RebaseIcon />} label={`Rebase actual sobre ${commit.shortHash}`} onClick={() => { onAction('rebase', commit); onClose() }} />
+              <MenuItem icon={<CherryIcon />} label="Cherry-pick a rama actual" onClick={() => { onAction('cherry-pick', commit); onClose() }} />
+              <MenuItem icon={<RevertIcon />} label="Revertir este commit" onClick={() => { onAction('revert', commit); onClose() }} />
+            </>
+          )}
         </>
       )}
     </div>
@@ -679,12 +710,22 @@ const PinIcon     = ({ active }) => <svg width="14" height="14" viewBox="0 0 24 
 
 const LaptopIcon  = () => <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="shrink-0"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
 const CloudIcon   = () => <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="shrink-0"><path d="M17.5 19H9a7 7 0 116.71-9h1.79a4.5 4.5 0 110 9Z"/></svg>
+const StashDrawerIcon = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 8h16M4 8v12a2 2 0 002 2h12a2 2 0 002-2V8M4 8l1.6-4.8A2 2 0 017.5 2h9a2 2 0 011.9 1.2L20 8"/><path d="M10 12h4v2h-4z"/></svg>
 
 function RefPill({ item, onDoubleClickBranch }) {
   if (item.isTag) {
     return (
       <span className="inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded-sm font-mono leading-none whitespace-nowrap bg-amber-500/15 text-amber-400 ring-1 ring-amber-500/25">
         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="shrink-0"><path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+        {item.name}
+      </span>
+    )
+  }
+
+  if (item.isStash) {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-[11px] font-medium px-2 py-1 rounded font-mono leading-none whitespace-nowrap bg-brand-600/90 text-white transition-colors cursor-default">
+        <StashDrawerIcon />
         {item.name}
       </span>
     )

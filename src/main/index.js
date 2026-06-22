@@ -728,6 +728,21 @@ function parseGitLog(raw) {
       }
     })
     .filter(c => c.hash)
+
+  const stashIndexHashes = new Set()
+  parsed.forEach(c => {
+    // Identify stash commits (they typically have 'refs/stash' or start with 'WIP on ' or 'On <branch>:')
+    if (c.branches.some(b => b.includes('refs/stash')) || c.tags.some(t => t.includes('refs/stash')) || c.refs.includes('refs/stash')) {
+      // Stash commits have 2 or 3 parents: [0] base commit, [1] index commit, [2] untracked files
+      if (c.parents.length >= 2) stashIndexHashes.add(c.parents[1])
+      if (c.parents.length >= 3) stashIndexHashes.add(c.parents[2])
+      
+      // Remove index/untracked parents so the graph layout doesn't draw infinite lines
+      c.parents = [c.parents[0]].filter(Boolean)
+    }
+  })
+
+  return parsed.filter(c => !stashIndexHashes.has(c.hash))
 }
 
 ipcMain.handle('system:openInVSCode', async (_e, folderPath) => {
