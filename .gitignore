@@ -25,3 +25,12 @@ Thumbs.db
 
 # Electron builder
 release/
+
+# Playwright
+.playwright/
+playwright-report/
+test-results/
+
+# Local agent configuration and temporary scripts
+.claude/
+test-gone.js

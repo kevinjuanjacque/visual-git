@@ -7,6 +7,8 @@ export default function Sidebar({
   onTagClick, onStashPop, onStashDrop
 }) {
   const [confirmRemove, setConfirmRemove] = useState(null)
+  const [repoFilter, setRepoFilter] = useState('')
+  const [branchFilter, setBranchFilter] = useState('')
 
   function handleRemove(e, path) {
     e.stopPropagation()
@@ -19,8 +21,13 @@ export default function Sidebar({
     }
   }
 
-  const localBranches  = branches.filter(b => !b.startsWith('remotes/'))
-  const remoteBranches = branches.filter(b => b.startsWith('remotes/'))
+  const normalizedRepoFilter = repoFilter.trim().toLocaleLowerCase()
+  const normalizedBranchFilter = branchFilter.trim().toLocaleLowerCase()
+  const filteredRepos = repos.filter(repo => repo.toLocaleLowerCase().includes(normalizedRepoFilter))
+  const localBranches = branches.filter(branch => !branch.startsWith('remotes/'))
+  const remoteBranches = branches.filter(branch => branch.startsWith('remotes/'))
+  const filteredLocalBranches = localBranches.filter(branch => branch.toLocaleLowerCase().includes(normalizedBranchFilter))
+  const filteredRemoteBranches = remoteBranches.filter(branch => branch.toLocaleLowerCase().includes(normalizedBranchFilter))
 
   return (
     <aside className="w-56 shrink-0 flex flex-col bg-surface-850 border-r border-surface-700/60 overflow-hidden">
@@ -35,11 +42,22 @@ export default function Sidebar({
             </svg>
           </button>
         </div>
+        {repos.length > 0 && (
+          <FilterInput
+            ariaLabel="Filtrar repositorios abiertos"
+            value={repoFilter}
+            onChange={setRepoFilter}
+            placeholder="Filtrar repositorios..."
+          />
+        )}
         <ul className="px-1.5 pb-2 space-y-0.5 max-h-48 overflow-y-auto">
           {repos.length === 0 && (
             <li className="px-2 py-4 text-[11px] text-slate-600 text-center">Abre un repositorio con el botón +</li>
           )}
-          {repos.map(repo => {
+          {repos.length > 0 && filteredRepos.length === 0 && (
+            <li className="px-2 py-4 text-[11px] text-slate-600 text-center">No hay repositorios que coincidan</li>
+          )}
+          {filteredRepos.map(repo => {
             const name     = repo.split('/').pop()
             const isActive = repo === currentRepo
             return (
@@ -76,21 +94,29 @@ export default function Sidebar({
       <section className="flex-1 overflow-y-auto">
         {currentRepo ? (
           <>
+            <FilterInput
+              ariaLabel="Filtrar ramas"
+              value={branchFilter}
+              onChange={setBranchFilter}
+              placeholder="Filtrar ramas..."
+            />
             <BranchGroup
               title="Local"
-              branches={localBranches}
+              branches={filteredLocalBranches}
               current={currentBranch}
               repoPath={currentRepo}
               onCheckout={onCheckout}
+              emptyMessage={normalizedBranchFilter ? 'No hay ramas locales que coincidan' : 'No hay ramas locales'}
             />
-            {remoteBranches.length > 0 && (
+            {(remoteBranches.length > 0 || normalizedBranchFilter) && (
               <BranchGroup
                 title="Remoto"
-                branches={remoteBranches}
+                branches={filteredRemoteBranches}
                 current=""
                 repoPath={currentRepo}
                 onCheckout={onCheckout}
                 dimmed
+                emptyMessage={normalizedBranchFilter ? 'No hay ramas remotas que coincidan' : 'No hay ramas remotas'}
               />
             )}
             {tags?.length > 0 && (
@@ -115,7 +141,33 @@ export default function Sidebar({
 
 // ── BranchGroup ──────────────────────────────────────────────────────────────
 
-function BranchGroup({ title, branches, current, repoPath, onCheckout, dimmed = false }) {
+function FilterInput({ ariaLabel, value, onChange, placeholder }) {
+  return (
+    <div className="px-2 pb-2 relative">
+      <input
+        aria-label={ariaLabel}
+        type="search"
+        value={value}
+        onChange={event => onChange(event.target.value)}
+        placeholder={placeholder}
+        autoComplete="off"
+        className="w-full bg-surface-900 border border-surface-700/60 rounded px-2 py-1 text-[11px] text-slate-300 placeholder-slate-600 focus:outline-none focus:border-brand-500"
+      />
+      {value && (
+        <button
+          type="button"
+          aria-label={`Limpiar ${ariaLabel.toLocaleLowerCase()}`}
+          onClick={() => onChange('')}
+          className="absolute right-3 top-0.5 text-slate-500 hover:text-slate-300 text-base leading-none"
+        >
+          ×
+        </button>
+      )}
+    </div>
+  )
+}
+
+function BranchGroup({ title, branches, current, repoPath, onCheckout, dimmed = false, emptyMessage }) {
   const [open,           setOpen]           = useState(true)
   const [checking,       setChecking]       = useState(null)
   const [lastError,      setLastError]      = useState(null)
@@ -158,6 +210,9 @@ function BranchGroup({ title, branches, current, repoPath, onCheckout, dimmed = 
 
       {open && (
         <ul className="px-1.5 pb-2 space-y-0.5">
+          {branches.length === 0 && (
+            <li className="px-2 py-2 text-[11px] text-slate-600">{emptyMessage}</li>
+          )}
           {branches.map(b => {
             const name       = b.replace(/^remotes\/[^/]+\//, '')
             const isCurrent  = b === current || name === current

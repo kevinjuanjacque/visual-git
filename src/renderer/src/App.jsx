@@ -53,7 +53,7 @@ export default function App() {
   }, [currentRepo])
 
   // Git log data
-  const { commits, branches, currentBranch, loading, error, lastRefresh, nextRefresh, refresh } =
+  const { commits, branches, currentBranch, loading, error, lastRefresh, nextRefresh, refresh, networkRefresh, hasMore, loadMoreCommits } =
     useGitData(currentRepo, pinnedBranches)
 
   // Git working-tree status (WIP, staging, tags, stashes)
@@ -302,7 +302,7 @@ export default function App() {
         lastRefresh={lastRefresh}
         nextRefresh={nextRefresh}
         hasWip={hasWip}
-        onRefresh={refresh}
+        onRefresh={networkRefresh}
         onOpenRepo={handleOpenRepo}
         onLogout={handleLogout}
         onPull={handlePull}
@@ -324,6 +324,13 @@ export default function App() {
           const res = await window.electronAPI.openInVSCode(currentRepo)
           if (!res?.ok) {
             setErrors(prev => [...prev, { id: Date.now(), msg: `Error abriendo VS Code: ${res?.error}` }])
+          }
+        }}
+        onOpenInGitHub={async () => {
+          if (!currentRepo) return
+          const res = await window.electronAPI.openInGitHub(currentRepo)
+          if (!res?.ok) {
+            setErrors(prev => [...prev, { id: Date.now(), msg: `Error abriendo GitHub: ${res?.error}` }])
           }
         }}
       />
@@ -366,6 +373,8 @@ export default function App() {
           <GitGraph
             commits={graphCommits}
             selectedHash={selectedCommit?.hash}
+            hasMore={hasMore}
+            onLoadMore={loadMoreCommits}
             onSelectCommit={(commit) => {
               setSelectedCommit(commit)
               setSelectedDiffFile(null) // clear diff view when changing commit
@@ -373,7 +382,7 @@ export default function App() {
             loading={loading}
             error={error}
             repoPath={currentRepo}
-            onRefresh={() => { refresh(); refreshStatus() }}
+            onRefresh={() => { networkRefresh(); refreshStatus() }}
             scrollToHash={scrollToHash}
             onScrollHandled={() => setScrollToHash(null)}
             conflictedFiles={conflictState?.files || []}
@@ -408,6 +417,9 @@ export default function App() {
                       break
                     case 'cherry-pick':
                       res = await window.electronAPI.cherryPick({ folderPath: currentRepo, hash: commit.hash })
+                      break
+                    case 'revert':
+                      res = await window.electronAPI.revert({ folderPath: currentRepo, hash: commit.hash })
                       break
                     default:
                       return { ok: true }

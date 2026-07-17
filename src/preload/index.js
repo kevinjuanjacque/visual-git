@@ -46,6 +46,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   gitCommit:       (data)         => ipcRenderer.invoke('git:commit', data),
   reset:           (data)         => ipcRenderer.invoke('git:reset', data),
   cherryPick:      (data)         => ipcRenderer.invoke('git:cherryPick', data),
+  revert:          (data)         => ipcRenderer.invoke('git:revert', data),
   pull:            (path)         => ipcRenderer.invoke('git:pull', path),
   push:            (data)         => ipcRenderer.invoke('git:push', data),
   getFileDiff:     (data)         => ipcRenderer.invoke('git:getFileDiff', data),
@@ -60,5 +61,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   removeRepo: (path) => ipcRenderer.invoke('store:removeRepo', path),
 
   // ── System ────────────────────────────────────────────────────────────────
-  openInVSCode: (path) => ipcRenderer.invoke('system:openInVSCode', path)
+  openInVSCode: (path) => ipcRenderer.invoke('system:openInVSCode', path),
+  openInGitHub: (path) => ipcRenderer.invoke('system:openInGitHub', path)
 })

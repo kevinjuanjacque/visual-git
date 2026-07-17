@@ -18,7 +18,7 @@ try {
   }
 } catch { /* ignore */ }
 
-const store = new Store()
+const store = new Store(process.env.GITVISUAL_E2E_STORE ? { cwd: process.env.GITVISUAL_E2E_STORE } : undefined)
 let mainWindow
 let oauthServer = null   // servidor HTTP temporal para el callback OAuth
 
@@ -27,6 +27,10 @@ const OAUTH_PORT = 42420
 const OAUTH_REDIRECT = `http://localhost:${OAUTH_PORT}/callback`
 
 // ── Single instance ───────────────────────────────────────────────────────────
+
+if (process.env.GITVISUAL_E2E_STORE) {
+  app.setPath('userData', process.env.GITVISUAL_E2E_STORE)
+}
 
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
@@ -69,10 +73,25 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  seedE2EState()
   createWindow()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
+
+  function seedE2EState() {
+    if (process.env.GITVISUAL_E2E !== '1') return
+
+    try {
+      const repos = JSON.parse(process.env.GITVISUAL_E2E_REPOS || '[]')
+      if (!Array.isArray(repos)) throw new Error('GITVISUAL_E2E_REPOS debe ser un arreglo JSON')
+
+      store.set('githubUser', { login: 'playwright', avatar_url: '' })
+      store.set('repositories', repos)
+    } catch (err) {
+      throw new Error(`No se pudo inicializar el entorno E2E: ${err.message}`)
+    }
+  }
 })
 
 app.on('window-all-closed', () => {
@@ -258,17 +277,36 @@ ipcMain.handle('git:validateRepo', (_e, folderPath) => {
   return existsSync(join(folderPath, '.git'))
 })
 
-ipcMain.handle('git:getLog', async (_e, folderPath) => {
+ipcMain.handle('git:getLog', async (_e, arg) => {
+  // Support both string and object args for backward compatibility
+  const folderPath = typeof arg === 'string' ? arg : arg.folderPath
+  const maxCount = typeof arg === 'object' ? arg.maxCount : 200
+  const skip = typeof arg === 'object' ? arg.skip : 0
+  const fetchRemote = typeof arg === 'object' ? arg.fetchRemote : false
+
   const git = simpleGit(folderPath)
 
-  const raw = await git.raw([
+  if (fetchRemote) {
+    try {
+      await git.fetch(['--all', '--prune'])
+    } catch (err) {
+      console.warn('Network fetch failed:', err)
+    }
+  }
+
+  const args = [
     'log',
     '--all',
     '--date-order',
     '--format=%x00%H%x01%P%x01%an%x01%ae%x01%aI%x01%s%x01%D',
     '--date=iso-strict',
     '--shortstat'
-  ])
+  ]
+
+  if (maxCount) args.push(`-n${maxCount}`)
+  if (skip) args.push(`--skip=${skip}`)
+
+  const raw = await git.raw(args)
 
   const commits = parseGitLog(raw)
   const branchInfo = await git.branch(['-a'])
@@ -276,7 +314,8 @@ ipcMain.handle('git:getLog', async (_e, folderPath) => {
   return {
     commits,
     branches: branchInfo.all,
-    currentBranch: branchInfo.current
+    currentBranch: branchInfo.current,
+    hasMore: commits.length === maxCount // Si devuelve maxCount, asumimos que hay más
   }
 })
 
@@ -368,9 +407,9 @@ ipcMain.handle('git:checkout', async (_e, { folderPath, branch }) => {
   const git = simpleGit(folderPath)
 
   // Para ramas remotas (remotes/origin/feature) hacemos tracking local
-  const isRemote = branch.startsWith('remotes/')
+  const isRemote = branch.startsWith('remotes/') || branch.startsWith('origin/')
   const localName = isRemote
-    ? branch.replace(/^remotes\/[^/]+\//, '')   // "remotes/origin/feat" → "feat"
+    ? branch.replace(/^(?:remotes\/)?origin\//, '')   // "remotes/origin/feat" → "feat"
     : branch
 
   try {
@@ -563,6 +602,16 @@ ipcMain.handle('git:cherryPick', async (_e, { folderPath, hash }) => {
   try {
     const git = simpleGit(folderPath)
     await git.raw(['cherry-pick', hash])
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: err.message }
+  }
+})
+
+ipcMain.handle('git:revert', async (_e, { folderPath, hash }) => {
+  try {
+    const git = simpleGit(folderPath)
+    await git.raw(['revert', '--no-edit', hash])
     return { ok: true }
   } catch (err) {
     return { ok: false, error: err.message }
@@ -769,4 +818,25 @@ ipcMain.handle('system:openInVSCode', async (_e, folderPath) => {
       }
     })
   })
+})
+
+ipcMain.handle('system:openInGitHub', async (_e, folderPath) => {
+  try {
+    const git = simpleGit(folderPath)
+    const url = await git.listRemote(['--get-url', 'origin'])
+    if (!url) return { ok: false, error: 'No origin remote found' }
+
+    let httpsUrl = url.trim()
+    if (httpsUrl.startsWith('git@')) {
+      httpsUrl = httpsUrl.replace(':', '/').replace('git@', 'https://')
+    }
+    if (httpsUrl.endsWith('.git')) {
+      httpsUrl = httpsUrl.slice(0, -4)
+    }
+
+    await shell.openExternal(httpsUrl)
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: err.message }
+  }
 })

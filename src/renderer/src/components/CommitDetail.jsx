@@ -367,6 +367,7 @@ function WipPanel({ repoPath, staged, unstaged, untracked, conflictedFiles = [],
               <option value="revert">revert</option>
             </select>
             <input
+              aria-label="Alcance del commit"
               value={commitScope}
               onChange={e => setCommitScope(e.target.value)}
               placeholder="scope (opc)"
@@ -374,6 +375,7 @@ function WipPanel({ repoPath, staged, unstaged, untracked, conflictedFiles = [],
             />
           </div>
           <input
+            aria-label="Asunto del commit"
             value={commitSubject}
             onChange={e => setCommitSubject(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) handleCommit() }}
@@ -381,6 +383,7 @@ function WipPanel({ repoPath, staged, unstaged, untracked, conflictedFiles = [],
             className="w-full bg-surface-900 border border-surface-600 rounded-md px-3 py-1.5 text-[12px] text-slate-200 placeholder-slate-600 focus:outline-none focus:border-brand-500 transition-colors mb-2"
           />
           <textarea
+            aria-label="Descripción del commit"
             value={commitBody}
             onChange={e => setCommitBody(e.target.value)}
             placeholder="Descripción extendida (opcional)"

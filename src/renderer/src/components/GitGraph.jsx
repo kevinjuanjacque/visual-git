@@ -11,13 +11,14 @@ export default function GitGraph({
   loading, error, repoPath, onRefresh,
   scrollToHash, onScrollHandled,
   conflictedFiles = [], onGitAction,
-  pinnedBranches = [], onTogglePin
+  pinnedBranches = [], onTogglePin,
+  hasMore, onLoadMore
 }) {
   const listRef   = useRef(null)
   const [filter, setFilter] = useState('')
 
   // ── Column resize ─────────────────────────────────────────────────────────
-  const [colWidths, setColWidths] = useState({ refs: 150, desc: 400, author: 120, stats: 100, date: 120 })
+  const [colWidths, setColWidths] = useState({ refs: 150, author: 120, stats: 100, date: 120 })
   const draggingRef = useRef(null)
 
   const handleMouseDown = (e, col) => {
@@ -36,6 +37,21 @@ export default function GitGraph({
     window.addEventListener('mouseup', onUp)
     return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
   }, [])
+
+  // Auto-size refs column based on commit branches
+  useEffect(() => {
+    let max = 150
+    for (const c of commits) {
+      const refs = [...(c.branches || []), ...(c.tags || []), ...(c.stashes || [])]
+      if (refs.length > 0) {
+        // approx 7.5px per char + 40px for padding and icon
+        const len = refs[0].length * 7.5 + 40
+        if (len > max) max = len
+      }
+    }
+    max = Math.min(max, 400)
+    setColWidths(prev => ({ ...prev, refs: max }))
+  }, [commits])
 
   // ── Multi-select ──────────────────────────────────────────────────────────
   const [selectedHashes, setSelectedHashes] = useState(new Set())
@@ -100,13 +116,18 @@ export default function GitGraph({
   useEffect(() => {
     if (!listRef.current) return
     const el = listRef.current
-    const onScroll = () => setScrollTop(el.scrollTop)
+    const onScroll = () => {
+      setScrollTop(el.scrollTop)
+      if (hasMore && el.scrollTop + el.clientHeight >= el.scrollHeight - 500) {
+        onLoadMore?.()
+      }
+    }
     const onResize = () => setClientHeight(el.clientHeight)
     el.addEventListener('scroll', onScroll, { passive: true })
     window.addEventListener('resize', onResize)
     onResize()
     return () => { el.removeEventListener('scroll', onScroll); window.removeEventListener('resize', onResize) }
-  }, [])
+  }, [hasMore, onLoadMore])
 
   const startIndex = Math.max(0, Math.floor(scrollTop / ROW_H) - 10)
   const endIndex = Math.min(filtered.length, Math.ceil((scrollTop + clientHeight) / ROW_H) + 10)
@@ -241,10 +262,10 @@ export default function GitGraph({
         {error && <div className="mx-3 my-3 p-3 bg-red-900/30 border border-red-700/50 rounded-lg text-xs text-red-400">{error}</div>}
 
         {filtered.length > 0 && (
-          <div className="relative" style={{ minWidth: totalWidth, width: 'max-content', minHeight: '100%' }}>
+          <div className="relative" style={{ minWidth: colWidths.refs + svgW + 200 + colWidths.author + colWidths.stats + colWidths.date, width: '100%', minHeight: '100%' }}>
 
             {/* Sticky Header */}
-            <div className="sticky top-0 z-20 flex items-center h-7 bg-surface-950/90 backdrop-blur border-b border-surface-700 text-[10px] text-slate-500 uppercase tracking-wider font-medium select-none shadow-sm" style={{ width: totalWidth }}>
+            <div className="sticky top-0 z-20 flex items-center h-7 bg-surface-950/90 backdrop-blur border-b border-surface-700 text-[10px] text-slate-500 uppercase tracking-wider font-medium select-none shadow-sm w-full">
               
               <div style={{ width: colWidths.refs }} className="relative shrink-0 px-2 border-r border-surface-700/50 flex items-center justify-end">
                 Ramas / Tags
@@ -258,7 +279,12 @@ export default function GitGraph({
 
               <div style={{ width: svgW }} className="shrink-0 px-2 border-r border-surface-700/50">Graph</div>
 
-              {[['desc', 'Descripción'], ['author', 'Autor'], ['stats', 'Líneas'], ['date', 'Fecha']].map(([key, label]) => (
+              {/* Desc flexible */}
+              <div className="relative flex-1 min-w-[200px] px-2 border-r border-surface-700/50 flex items-center">
+                Descripción
+              </div>
+
+              {[['author', 'Autor'], ['stats', 'Líneas'], ['date', 'Fecha']].map(([key, label]) => (
                 <div key={key} style={{ width: colWidths[key] }} className="relative shrink-0 px-2 border-r border-surface-700/50 flex items-center">
                   {label}
                   <div
@@ -272,7 +298,7 @@ export default function GitGraph({
             </div>
 
             {/* Content area */}
-            <div className="relative" style={{ height: totalH, width: totalWidth }}>
+            <div className="relative" style={{ height: totalH, width: '100%' }}>
               {visibleCommits.map((commit, i) => {
                 const globalRowIdx = startIndex + i
                 return (
@@ -405,7 +431,7 @@ function CommitRow({ commit, svgW, colWidths, isSelected, onClick, onContextMenu
       </div>
 
       {/* Description */}
-      <div style={{ width: colWidths.desc }} className="shrink-0 px-2 flex items-center gap-1.5 overflow-hidden">
+      <div className="flex-1 min-w-[200px] px-2 flex items-center gap-1.5 overflow-hidden">
         {isWip ? (
           <span className="text-[13px] text-slate-400 font-mono italic">// WIP — cambios sin commitear</span>
         ) : (
@@ -580,6 +606,7 @@ function ContextMenu({ x, y, commit, multiCount, pinnedBranches, onTogglePin, on
   const menuRef = useRef(null)
   const [pos, setPos] = useState({ x, y })
   const [resetOpen, setResetOpen] = useState(false)
+  const [checkoutOpen, setCheckoutOpen] = useState(false)
   const isWip = commit.isWip
 
   useEffect(() => {
@@ -594,6 +621,12 @@ function ContextMenu({ x, y, commit, multiCount, pinnedBranches, onTogglePin, on
   // Get first local branch from commit for Pin action
   const localBranch = commit.branches?.find(b => !b.startsWith('remotes/') && !b.startsWith('origin/'))
   const isPinned = localBranch ? pinnedBranches.includes(localBranch) : false
+
+  const uniqueCheckoutBranches = Array.from(new Set(
+    (commit.branches || [])
+      .filter(b => !b.includes('refs/stash') && b !== 'HEAD')
+      .map(b => b.replace(/^remotes\/[^/]+\//, ''))
+  ))
 
   return (
     <div
@@ -632,7 +665,37 @@ function ContextMenu({ x, y, commit, multiCount, pinnedBranches, onTogglePin, on
             </>
           ) : (
             <>
-              <MenuItem icon={<CheckoutIcon />} label="Checkout este commit" onClick={() => { onAction('checkout', commit); onClose() }} />
+              {uniqueCheckoutBranches.length === 0 ? (
+                <MenuItem icon={<CheckoutIcon />} label="Checkout este commit" onClick={() => { onAction('checkout', commit); onClose() }} />
+              ) : uniqueCheckoutBranches.length === 1 ? (
+                <MenuItem icon={<CheckoutIcon />} label={`Checkout rama '${uniqueCheckoutBranches[0]}'`} onClick={() => { onAction('checkout-branch', commit, uniqueCheckoutBranches[0]); onClose() }} />
+              ) : (
+                <div className="relative">
+                  <button
+                    onMouseEnter={() => setCheckoutOpen(true)}
+                    onMouseLeave={() => setCheckoutOpen(false)}
+                    className="w-full flex items-center gap-2.5 px-3 py-1.5 hover:bg-surface-700 transition-colors text-left"
+                  >
+                    <span className="shrink-0 opacity-70"><CheckoutIcon /></span>
+                    <span className="truncate text-xs flex-1">Checkout a...</span>
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 18 15 12 9 6"/></svg>
+                  </button>
+                  {checkoutOpen && (
+                    <div
+                      className="absolute left-full top-0 ml-1 w-48 bg-surface-800 border border-surface-700/60 rounded-lg shadow-xl py-1 max-h-64 overflow-y-auto"
+                      onMouseEnter={() => setCheckoutOpen(true)}
+                      onMouseLeave={() => setCheckoutOpen(false)}
+                    >
+                      <div className="px-3 py-1 text-[10px] text-slate-600 uppercase tracking-wider font-semibold">Ramas</div>
+                      {uniqueCheckoutBranches.map(b => (
+                        <MenuItem key={b} icon={<BranchIcon />} label={b} onClick={() => { onAction('checkout-branch', commit, b); onClose() }} />
+                      ))}
+                      <div className="h-px bg-surface-700/50 my-1" />
+                      <MenuItem icon={<CheckoutIcon />} label="Checkout commit (Hash)" onClick={() => { onAction('checkout', commit); onClose() }} sub="Detached HEAD" />
+                    </div>
+                  )}
+                </div>
+              )}
               <MenuItem icon={<BranchIcon />} label="Crear rama aquí..." onClick={() => { onAction('branch', commit); onClose() }} />
 
               {localBranch && (
@@ -712,10 +775,20 @@ const LaptopIcon  = () => <svg width="10" height="10" viewBox="0 0 24 24" fill="
 const CloudIcon   = () => <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="shrink-0"><path d="M17.5 19H9a7 7 0 116.71-9h1.79a4.5 4.5 0 110 9Z"/></svg>
 const StashDrawerIcon = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 8h16M4 8v12a2 2 0 002 2h12a2 2 0 002-2V8M4 8l1.6-4.8A2 2 0 017.5 2h9a2 2 0 011.9 1.2L20 8"/><path d="M10 12h4v2h-4z"/></svg>
 
+const SquashIcon  = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/><path d="M12 11v6"/><path d="M9 14l3 3 3-3"/></svg>
+const CherryIcon  = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2v12"/><path d="M12 14a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"/><path d="M15 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><path d="M9 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/></svg>
+const ResetIcon   = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+const SoftIcon    = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" strokeWidth="2"><circle cx="12" cy="12" r="10"/></svg>
+const MixedIcon   = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" strokeWidth="2"><circle cx="12" cy="12" r="10"/></svg>
+const RevertIcon  = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
+
 function RefPill({ item, onDoubleClickBranch }) {
   if (item.isTag) {
     return (
-      <span className="inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded-sm font-mono leading-none whitespace-nowrap bg-amber-500/15 text-amber-400 ring-1 ring-amber-500/25">
+      <span
+        onClick={(e) => e.stopPropagation()}
+        className="inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded-sm font-mono leading-none whitespace-nowrap bg-amber-500/15 text-amber-400 ring-1 ring-amber-500/25"
+      >
         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="shrink-0"><path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
         {item.name}
       </span>
@@ -724,7 +797,10 @@ function RefPill({ item, onDoubleClickBranch }) {
 
   if (item.isStash) {
     return (
-      <span className="inline-flex items-center gap-1.5 text-[11px] font-medium px-2 py-1 rounded font-mono leading-none whitespace-nowrap bg-brand-600/90 text-white transition-colors cursor-default">
+      <span
+        onClick={(e) => e.stopPropagation()}
+        className="inline-flex items-center gap-1.5 text-[11px] font-medium px-2 py-1 rounded font-mono leading-none whitespace-nowrap bg-brand-600/90 text-white transition-colors cursor-default"
+      >
         <StashDrawerIcon />
         {item.name}
       </span>
@@ -734,6 +810,7 @@ function RefPill({ item, onDoubleClickBranch }) {
   // Branch
   return (
     <span 
+      onClick={(e) => e.stopPropagation()}
       onDoubleClick={(e) => { 
         e.stopPropagation()
         const localBranch = item.originals.find(r => !r.startsWith('remotes/') && !r.startsWith('origin/'))

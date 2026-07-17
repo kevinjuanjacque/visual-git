@@ -14,25 +14,42 @@ export function useGitData(repoPath, pinnedBranches = []) {
   const [nextRefresh, setNextRefresh]       = useState(null)
   const intervalRef = useRef(null)
   const countdownRef = useRef(null)
+  const isRequestInFlightRef = useRef(false)
 
-  const fetchLog = useCallback(async (path) => {
-    if (!path) return
+  const [hasMore, setHasMore]               = useState(false)
+  const [skip, setSkip]                     = useState(0)
+  const PAGE_SIZE = 200
+
+  const fetchLog = useCallback(async (path, currentSkip = 0, append = false, fetchRemote = false) => {
+    if (!path || isRequestInFlightRef.current) return
+    isRequestInFlightRef.current = true
     setLoading(true)
     setError(null)
     try {
-      const data = await window.electronAPI.getLog(path)
-      setRawCommits(data.commits)
+      const data = await window.electronAPI.getLog({ folderPath: path, maxCount: PAGE_SIZE, skip: currentSkip, fetchRemote })
+      setRawCommits(previousCommits => {
+        const nextCommits = append ? [...previousCommits, ...data.commits] : data.commits
+        return Array.from(new Map(nextCommits.map(commit => [commit.hash, commit])).values())
+      })
       setBranches(data.branches)
       setCurrentBranch(data.currentBranch)
+      setHasMore(data.hasMore)
+      setSkip(currentSkip)
       const now = new Date()
       setLastRefresh(now)
       setNextRefresh(new Date(now.getTime() + REFRESH_INTERVAL_MS))
     } catch (err) {
       setError(err.message || 'Error al leer el repositorio')
     } finally {
+      isRequestInFlightRef.current = false
       setLoading(false)
     }
   }, [])
+
+  const loadMoreCommits = useCallback(() => {
+    if (!hasMore || loading) return
+    fetchLog(repoPath, skip + PAGE_SIZE, true)
+  }, [hasMore, loading, repoPath, skip, fetchLog])
 
   // Recalcular layout instantáneamente si cambian los commits crudos o las ramas pineadas
   useEffect(() => {
@@ -55,11 +72,12 @@ export function useGitData(repoPath, pinnedBranches = []) {
       return
     }
 
-    fetchLog(repoPath)
+    fetchLog(repoPath, 0, false)
 
     // Auto-refresh cada 5 minutos
+    clearInterval(intervalRef.current)
     intervalRef.current = setInterval(() => {
-      fetchLog(repoPath)
+      fetchLog(repoPath, 0, false)
     }, REFRESH_INTERVAL_MS)
 
     return () => {
@@ -85,6 +103,13 @@ export function useGitData(repoPath, pinnedBranches = []) {
     error,
     lastRefresh,
     nextRefresh,
-    refresh
+    hasMore,
+    loadMoreCommits,
+    refresh: () => {
+      if (repoPath) fetchLog(repoPath, 0, false)
+    },
+    networkRefresh: () => {
+      if (repoPath) fetchLog(repoPath, 0, false, true)
+    }
   }
 }
