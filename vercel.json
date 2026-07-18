@@ -1,0 +1,6 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "echo \"Serving the Visual Git landing page\"",
+  "outputDirectory": "landing",
+  "cleanUrls": true
+}

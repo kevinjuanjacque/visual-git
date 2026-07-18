@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Visual Git: un cliente Git visual, claro y local para macOS, Windows y Linux."
+    />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='6' r='4' fill='%238b7bff'/%3E%3Ccircle cx='6' cy='25' r='4' fill='%2311162a' stroke='%235bd8ff' stroke-width='2'/%3E%3Ccircle cx='26' cy='25' r='4' fill='%2311162a' stroke='%235bd8ff' stroke-width='2'/%3E%3Cpath d='M16 10v6M13.3 10.2 8.7 20.7M18.7 10.2l4.6 10.5' stroke='%235bd8ff' stroke-width='2.5' fill='none'/%3E%3C/svg%3E" />
+    <title>Visual Git | Tu historial Git, más claro</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="page-glow page-glow-left"></div>
+    <div class="page-glow page-glow-right"></div>
+
+    <header class="site-header">
+      <a class="brand" href="./" aria-label="Visual Git, inicio">
+        <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+          <circle cx="16" cy="6" r="4"></circle>
+          <circle cx="6" cy="25" r="4"></circle>
+          <circle cx="26" cy="25" r="4"></circle>
+          <path d="M16 10v5.5M13.3 10.2 8.7 20.7M18.7 10.2l4.6 10.5"></path>
+        </svg>
+        <span>Visual <strong>Git</strong></span>
+      </a>
+      <a class="header-link" href="#descargas">Descargar</a>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="eyebrow">
+          <span class="status-dot"></span>
+          Cliente Git de escritorio
+        </div>
+        <h1>Tu historial Git,<br /><span>más claro.</span></h1>
+        <p class="hero-copy">
+          Visual Git convierte ramas, merges y commits en una vista que puedes entender de un vistazo.
+          Todo corre de forma local en tu equipo.
+        </p>
+        <div class="hero-actions">
+          <a class="button button-primary" href="#descargas">
+            Descargar Visual Git
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3v10m0 0 4-4m-4 4L6 9M4 17h12"></path></svg>
+          </a>
+          <a class="button button-quiet" href="https://github.com/kevinjuanjacque/visual-git" target="_blank" rel="noreferrer">
+            Ver en GitHub
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 13 13 7M8 7h5v5"></path></svg>
+          </a>
+        </div>
+        <p class="platforms">Disponible para macOS, Windows y Linux</p>
+      </section>
+
+      <section class="app-preview" aria-label="Vista previa de Visual Git">
+        <div class="window">
+          <div class="window-topbar">
+            <div class="traffic-lights" aria-hidden="true"><i></i><i></i><i></i></div>
+            <div class="window-title">Visual Git <span>/ visual-git</span></div>
+            <div class="window-actions">⌘ K</div>
+          </div>
+          <div class="window-content">
+            <aside class="preview-sidebar">
+              <div class="sidebar-label">REPOSITORIOS</div>
+              <div class="repository selected"><span class="folder-icon">◇</span>visual-git</div>
+              <div class="sidebar-label branches-label">RAMAS</div>
+              <div class="branch active"><span></span>main</div>
+              <div class="branch"><span></span>feature/landing</div>
+              <div class="branch"><span></span>release/v1.0</div>
+              <div class="sidebar-footer">⌘ + O &nbsp; Abrir repositorio</div>
+            </aside>
+            <div class="preview-main">
+              <div class="preview-toolbar">
+                <div class="search">⌕&nbsp; Filtrar commits, ramas, autores...</div>
+                <span>↻</span>
+              </div>
+              <div class="commit-list">
+                <div class="commit-row">
+                  <div class="graph-line"><b class="node node-main"></b><em></em></div>
+                  <div class="commit-info"><strong>feat: agrega landing de descargas</strong><small>Kevin · ahora</small></div>
+                  <code>c1941b4</code>
+                  <time>main</time>
+                </div>
+                <div class="commit-row">
+                  <div class="graph-line split"><b class="node node-feature"></b><em></em></div>
+                  <div class="commit-info"><strong>chore: renombra a Visual Git</strong><small>Kevin · hace 8 min</small></div>
+                  <code>65ebe87</code>
+                  <time>feature/landing</time>
+                </div>
+                <div class="commit-row">
+                  <div class="graph-line"><b class="node node-main"></b><em></em></div>
+                  <div class="commit-info"><strong>feat: agrega flujos Git y pruebas E2E</strong><small>Kevin · hoy</small></div>
+                  <code>47adc23</code>
+                  <time></time>
+                </div>
+                <div class="commit-row">
+                  <div class="graph-line"><b class="node node-muted"></b></div>
+                  <div class="commit-info"><strong>chore: initial commit</strong><small>Kevin · hoy</small></div>
+                  <code>3a7bf10</code>
+                  <time></time>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="features" aria-label="Funciones principales">
+        <article>
+          <div class="feature-icon">⌘</div>
+          <h2>Historial visual</h2>
+          <p>Navega commits, ramas y merges en un grafo rápido y legible.</p>
+        </article>
+        <article>
+          <div class="feature-icon">⇄</div>
+          <h2>Flujos Git completos</h2>
+          <p>Haz commit, checkout, merge, rebase, cherry-pick y revert sin cambiar de contexto.</p>
+        </article>
+        <article>
+          <div class="feature-icon">⌕</div>
+          <h2>Encuentra lo importante</h2>
+          <p>Filtra repositorios, ramas y commits para llegar antes al cambio que buscas.</p>
+        </article>
+      </section>
+
+      <section class="downloads" id="descargas">
+        <div class="section-heading">
+          <p class="eyebrow">ELIGE TU PLATAFORMA</p>
+          <h2>Descarga Visual Git</h2>
+          <p>La primera versión pública está en preparación. Los enlaces actuales descargan archivos de muestra para validar la experiencia.</p>
+        </div>
+        <div class="download-grid">
+          <article class="download-card">
+            <div class="os-icon windows-icon" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+            <div><h3>Windows</h3><p>Windows 10 o superior · x64</p></div>
+            <a class="download-link" href="./downloads/visual-git-windows-x64.exe" download>Descargar .exe <span>→</span></a>
+            <small>Archivo de muestra, no instalable</small>
+          </article>
+          <article class="download-card">
+            <div class="os-icon apple-icon" aria-hidden="true">●</div>
+            <div><h3>macOS</h3><p>Apple Silicon y Intel · macOS 12+</p></div>
+            <a class="download-link" href="./downloads/visual-git-macos-universal.dmg" download>Descargar .dmg <span>→</span></a>
+            <small>Archivo de muestra, no instalable</small>
+          </article>
+          <article class="download-card">
+            <div class="os-icon linux-icon" aria-hidden="true">⌁</div>
+            <div><h3>Linux</h3><p>Distribuciones modernas · x64</p></div>
+            <a class="download-link" href="./downloads/visual-git-linux-x64.AppImage" download>Descargar .AppImage <span>→</span></a>
+            <small>Archivo de muestra, no instalable</small>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <a class="brand" href="./" aria-label="Visual Git, inicio">
+        <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+          <circle cx="16" cy="6" r="4"></circle><circle cx="6" cy="25" r="4"></circle><circle cx="26" cy="25" r="4"></circle><path d="M16 10v5.5M13.3 10.2 8.7 20.7M18.7 10.2l4.6 10.5"></path>
+        </svg>
+        <span>Visual <strong>Git</strong></span>
+      </a>
+      <p>Hecho para hacer Git más visual.</p>
+      <a href="https://github.com/kevinjuanjacque/visual-git" target="_blank" rel="noreferrer">GitHub ↗</a>
+    </footer>
+  </body>
+</html>
