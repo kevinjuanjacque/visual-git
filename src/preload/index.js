@@ -3,7 +3,6 @@ import { contextBridge, ipcRenderer } from 'electron'
 contextBridge.exposeInMainWorld('electronAPI', {
   // ── Auth ──────────────────────────────────────────────────────────────────
   getCredentials: ()              => ipcRenderer.invoke('auth:getCredentials'),
-  setCredentials: (creds)        => ipcRenderer.invoke('auth:setCredentials', creds),
   getUser:        ()              => ipcRenderer.invoke('auth:getUser'),
   getToken:       ()              => ipcRenderer.invoke('auth:getToken'),
   diagnose:       ()              => ipcRenderer.invoke('auth:diagnose'),

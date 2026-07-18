@@ -1,6 +1,7 @@
 import { test as base, expect } from '@playwright/test'
 import { _electron as electron } from 'playwright'
 import { execFile as execFileCallback } from 'node:child_process'
+import { createServer } from 'node:http'
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -58,6 +59,44 @@ async function isAncestor(repository, ancestor, descendant) {
   }
 }
 
+async function createDeviceFlowServer() {
+  const server = createServer((request, response) => {
+    const sendJson = body => {
+      response.writeHead(200, { 'Content-Type': 'application/json' })
+      response.end(JSON.stringify(body))
+    }
+
+    if (request.url === '/login/device/code') {
+      sendJson({
+        device_code: 'device-code-for-test',
+        user_code: 'ABCD-EFGH',
+        verification_uri: 'https://github.com/login/device',
+        expires_in: 900,
+        interval: 1
+      })
+      return
+    }
+    if (request.url === '/login/oauth/access_token') {
+      sendJson({ access_token: 'device-flow-test-token' })
+      return
+    }
+    if (request.url === '/user') {
+      sendJson({ login: 'device-flow-user', avatar_url: '' })
+      return
+    }
+
+    response.writeHead(404)
+    response.end()
+  })
+
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  const { port } = server.address()
+  return {
+    url: `http://127.0.0.1:${port}`,
+    close: () => new Promise(resolve => server.close(resolve))
+  }
+}
+
 const test = base.extend({
   workspace: async ({}, use) => {
     const root = await mkdtemp(join(tmpdir(), 'visual-git-e2e-'))
@@ -106,10 +145,16 @@ test('filter-open-repositories-and-branches', async ({ page }) => {
   await expect(sidebar.getByRole('button', { name: /alpha-repository/ })).not.toBeVisible()
 
   await repositoryFilter.fill('')
+  await expect(sidebar.getByText('feature/merge', { exact: true })).toBeVisible()
   const branchFilter = page.getByRole('searchbox', { name: 'Filtrar ramas', exact: true })
   await branchFilter.fill('feature/merge')
   await expect(sidebar.getByText('feature/merge', { exact: true })).toBeVisible()
   await expect(sidebar.getByText('feature/rebase', { exact: true })).not.toBeVisible()
+})
+
+test('captures the real application dashboard for the landing page', async ({ page }, testInfo) => {
+  await expect(page.getByText('feat: cherry branch', { exact: true })).toBeVisible()
+  await page.screenshot({ path: testInfo.outputPath('visual-git-dashboard.png') })
 })
 
 test('create-a-commit', async ({ page, workspace }) => {
@@ -168,4 +213,30 @@ test('cherry-pick-and-revert', async ({ page, workspace }) => {
     const { stdout } = await git(workspace.primaryRepository, 'log', '-1', '--format=%s')
     return stdout.trim()
   }).toBe('Revert "feat: cherry branch"')
+})
+
+test('authenticates using GitHub Device Flow', async () => {
+  const mockGitHub = await createDeviceFlowServer()
+  const storePath = await mkdtemp(join(tmpdir(), 'visual-git-auth-e2e-'))
+  const app = await electron.launch({
+    args: ['.'],
+    env: {
+      ...process.env,
+      GITHUB_OAUTH_BASE_URL: mockGitHub.url,
+      GITHUB_API_BASE_URL: mockGitHub.url,
+      GITVISUAL_E2E_STORE: storePath,
+      GITVISUAL_TEST_DISABLE_OPEN_EXTERNAL: '1'
+    }
+  })
+
+  try {
+    const page = await app.firstWindow()
+    await page.getByRole('button', { name: 'Iniciar sesión con GitHub' }).click()
+    await expect(page.getByText('ABCD-EFGH', { exact: true })).toBeVisible()
+    await expect(page.getByText('device-flow-user', { exact: true })).toBeVisible({ timeout: 10_000 })
+  } finally {
+    await app.close()
+    await mockGitHub.close()
+    await rm(storePath, { recursive: true, force: true })
+  }
 })

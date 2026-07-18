@@ -1,7 +1,6 @@
 import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron'
 import { join, resolve } from 'path'
 import { existsSync, readFileSync } from 'fs'
-import { createServer } from 'http'
 import crypto from 'crypto'
 import { simpleGit } from 'simple-git'
 import Store from 'electron-store'
@@ -20,11 +19,10 @@ try {
 
 const store = new Store(process.env.GITVISUAL_E2E_STORE ? { cwd: process.env.GITVISUAL_E2E_STORE } : undefined)
 let mainWindow
-let oauthServer = null   // servidor HTTP temporal para el callback OAuth
 
-// Puerto fijo para el callback — debe coincidir con el configurado en la GitHub OAuth App
-const OAUTH_PORT = 42420
-const OAUTH_REDIRECT = `http://localhost:${OAUTH_PORT}/callback`
+const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID || 'Iv23liAyb9iXNzX2vBne'
+const GITHUB_OAUTH_BASE_URL = process.env.GITHUB_OAUTH_BASE_URL || 'https://github.com'
+const GITHUB_API_BASE_URL = process.env.GITHUB_API_BASE_URL || 'https://api.github.com'
 
 // ── Single instance ───────────────────────────────────────────────────────────
 
@@ -101,45 +99,48 @@ app.on('window-all-closed', () => {
 // ── GitHub OAuth via localhost callback ───────────────────────────────────────
 
 ipcMain.handle('auth:getCredentials', () => ({
-  clientId: process.env.GITHUB_CLIENT_ID || store.get('githubClientId', ''),
-  clientSecret: process.env.GITHUB_CLIENT_SECRET ? '***' : (store.get('githubClientSecret', '') ? '***' : ''),
-  fromEnv: !!process.env.GITHUB_CLIENT_ID
+  clientId: GITHUB_CLIENT_ID,
+  fromEnv: true
 }))
-
-ipcMain.handle('auth:setCredentials', (_e, { clientId, clientSecret }) => {
-  store.set('githubClientId', clientId)
-  store.set('githubClientSecret', clientSecret)
-})
 
 ipcMain.handle('auth:getUser',  () => store.get('githubUser', null))
 ipcMain.handle('auth:getToken', () => store.get('githubToken', null))
 
 // Diagnóstico: devuelve el estado interno para mostrar en la UI
 ipcMain.handle('auth:diagnose', () => ({
-  hasClientId:     !!(process.env.GITHUB_CLIENT_ID || store.get('githubClientId', '')),
-  hasClientSecret: !!(process.env.GITHUB_CLIENT_SECRET || store.get('githubClientSecret', '')),
-  clientSecretIsPlaceholder: (process.env.GITHUB_CLIENT_SECRET || '').includes('PEGA_AQUI'),
+  hasClientId:     !!GITHUB_CLIENT_ID,
   hasToken:        !!store.get('githubToken'),
   hasUser:         !!store.get('githubUser'),
-  serverActive:    !!oauthServer,
-  oauthPort:       OAUTH_PORT,
-  redirectUri:     OAUTH_REDIRECT,
+  flow:             'device'
 }))
 
 ipcMain.handle('auth:login', async () => {
-  const clientId = process.env.GITHUB_CLIENT_ID || store.get('githubClientId', '')
-  if (!clientId) return { error: 'no_credentials' }
+  try {
+    const response = await axios.post(
+      `${GITHUB_OAUTH_BASE_URL}/login/device/code`,
+      { client_id: GITHUB_CLIENT_ID },
+      { headers: { Accept: 'application/json' } }
+    )
+    const authorization = response.data
 
-  // Levanta el servidor HTTP de callback (si no está ya corriendo)
-  startOAuthCallbackServer()
+    if (!authorization.device_code || !authorization.user_code || !authorization.verification_uri) {
+      throw new Error('GitHub devolvió una respuesta de autorización incompleta.')
+    }
 
-  const authUrl =
-    `https://github.com/login/oauth/authorize` +
-    `?client_id=${encodeURIComponent(clientId)}` +
-    `&scope=repo,user` +
-    `&redirect_uri=${encodeURIComponent(OAUTH_REDIRECT)}`
+    if (process.env.GITVISUAL_TEST_DISABLE_OPEN_EXTERNAL !== '1') {
+      await shell.openExternal(authorization.verification_uri)
+    }
+    pollDeviceAuthorization(authorization)
 
-  shell.openExternal(authUrl)
+    return {
+      ok: true,
+      userCode: authorization.user_code,
+      verificationUri: authorization.verification_uri,
+      expiresIn: authorization.expires_in
+    }
+  } catch (err) {
+    return { ok: false, error: getErrorMessage(err) }
+  }
 })
 
 ipcMain.handle('auth:logout', () => {
@@ -147,118 +148,70 @@ ipcMain.handle('auth:logout', () => {
   store.delete('githubUser')
 })
 
-function startOAuthCallbackServer() {
-  if (oauthServer) return   // ya está escuchando
+async function pollDeviceAuthorization(authorization) {
+  const expiresAt = Date.now() + (authorization.expires_in * 1000)
+  let interval = Math.max(authorization.interval || 5, 5)
 
-  oauthServer = createServer((req, res) => {
-    console.log('[OAuth] Incoming request:', req.url)
+  while (Date.now() < expiresAt) {
+    await delay(interval * 1000)
 
-    if (!req.url?.startsWith('/callback')) {
-      res.writeHead(404)
-      res.end()
+    try {
+      const response = await axios.post(
+        `${GITHUB_OAUTH_BASE_URL}/login/oauth/access_token`,
+        {
+          client_id: GITHUB_CLIENT_ID,
+          device_code: authorization.device_code,
+          grant_type: 'urn:ietf:params:oauth:grant-type:device_code'
+        },
+        { headers: { Accept: 'application/json' } }
+      )
+      const result = response.data
+
+      if (result.access_token) {
+        await completeGitHubLogin(result.access_token)
+        return
+      }
+      if (result.error === 'authorization_pending') continue
+      if (result.error === 'slow_down') {
+        interval += 5
+        continue
+      }
+
+      throw new Error(result.error_description || result.error || 'No se pudo autorizar GitHub.')
+    } catch (err) {
+      mainWindow?.webContents.send('auth:error', getErrorMessage(err))
       return
     }
+  }
 
-    const url  = new URL(`http://localhost${req.url}`)
-    const code = url.searchParams.get('code')
-    const err  = url.searchParams.get('error')
-
-    console.log('[OAuth] code:', code ? code.substring(0, 8) + '...' : 'none', '| error:', err)
-
-    // Responde al browser con una página de cierre amigable
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
-    res.end(`<!DOCTYPE html>
-<html lang="es">
-<head><meta charset="UTF-8"><title>Visual Git — Auth</title>
-<style>
-  body{margin:0;height:100vh;display:flex;align-items:center;justify-content:center;
-       background:#1b1e2e;color:#d1d5e0;font-family:'Inter',-apple-system,sans-serif}
-  .card{text-align:center;padding:2rem;border-radius:1rem;background:#252a3a;
-        border:1px solid #2d3348;max-width:400px}
-  h2{margin:0 0 .5rem;font-size:1.25rem}
-  p{color:#94a3b8;margin:0;font-size:.9rem}
-  .icon{font-size:2.5rem;margin-bottom:1rem}
-</style></head>
-<body>
-  <div class="card">
-    <div class="icon">${err ? '❌' : '✅'}</div>
-    <h2>${err ? 'Error de autenticación' : '¡Autenticado correctamente!'}</h2>
-    <p>${err ? err : 'Puedes cerrar esta pestaña y volver a Visual Git.'}</p>
-  </div>
-</body></html>`)
-
-    // Cierra el servidor después de responder
-    setImmediate(() => {
-      oauthServer?.close()
-      oauthServer = null
-    })
-
-    if (code) {
-      handleOAuthCode(code)
-    } else if (err) {
-      mainWindow?.webContents.send('auth:error', `GitHub rechazó el acceso: ${err}`)
-    }
-  })
-
-  oauthServer.on('error', e => {
-    console.error('[OAuth] Server error:', e.message)
-    mainWindow?.webContents.send('auth:error', `Error servidor OAuth (puerto ${OAUTH_PORT}): ${e.message}`)
-  })
-
-  // Escucha en TODAS las interfaces (IPv4 + IPv6) para que funcione
-  // tanto con localhost→127.0.0.1 como localhost→::1 según el SO
-  oauthServer.listen(OAUTH_PORT, () => {
-    const addr = oauthServer.address()
-    console.log(`[OAuth] Callback server listening on port ${addr?.port}`)
-  })
+  mainWindow?.webContents.send('auth:error', 'El código de GitHub expiró. Intenta iniciar sesión otra vez.')
 }
 
-async function handleOAuthCode(code) {
-  try {
-    const clientId     = process.env.GITHUB_CLIENT_ID     || store.get('githubClientId', '')
-    const clientSecret = process.env.GITHUB_CLIENT_SECRET || store.get('githubClientSecret', '')
-
-    console.log('[OAuth] Exchanging code for token. clientId:', clientId, '| hasSecret:', !!clientSecret)
-
-    if (!clientSecret) {
-      throw new Error('Client Secret no configurado. Actualiza tu .env con GITHUB_CLIENT_SECRET.')
+async function completeGitHubLogin(token) {
+  const userRes = await axios.get(`${GITHUB_API_BASE_URL}/user`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/vnd.github+json'
     }
+  })
 
-    // NO enviamos redirect_uri en el intercambio — GitHub lo acepta sin él
-    // y es más seguro para evitar discrepancias de URL
-    const tokenRes = await axios.post(
-      'https://github.com/login/oauth/access_token',
-      { client_id: clientId, client_secret: clientSecret, code },
-      { headers: { Accept: 'application/json' } }
-    )
+  store.set('githubToken', token)
+  store.set('githubUser', userRes.data)
 
-    console.log('[OAuth] Token response:', JSON.stringify(tokenRes.data))
-
-    const token = tokenRes.data.access_token
-    if (!token) {
-      const msg = tokenRes.data.error_description || tokenRes.data.error || JSON.stringify(tokenRes.data)
-      throw new Error(`GitHub no devolvió token: ${msg}`)
-    }
-
-    store.set('githubToken', token)
-
-    const userRes = await axios.get('https://api.github.com/user', {
-      headers: { Authorization: `Bearer ${token}` }
-    })
-
-    console.log('[OAuth] Logged in as:', userRes.data.login)
-    store.set('githubUser', userRes.data)
-
-    // Trae la ventana al frente y notifica al renderer
-    if (mainWindow) {
-      mainWindow.show()
-      mainWindow.focus()
-      if (mainWindow.isMinimized()) mainWindow.restore()
-    }
-    mainWindow?.webContents.send('auth:success', userRes.data)
-  } catch (err) {
-    mainWindow?.webContents.send('auth:error', err.message)
+  if (mainWindow) {
+    mainWindow.show()
+    mainWindow.focus()
+    if (mainWindow.isMinimized()) mainWindow.restore()
   }
+  mainWindow.webContents.send('auth:success', userRes.data)
+}
+
+function delay(milliseconds) {
+  return new Promise(resolve => setTimeout(resolve, milliseconds))
+}
+
+function getErrorMessage(error) {
+  return error.response?.data?.error_description || error.response?.data?.error || error.message
 }
 
 // ── Dialog ────────────────────────────────────────────────────────────────────
