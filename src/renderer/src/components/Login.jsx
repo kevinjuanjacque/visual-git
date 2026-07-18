@@ -91,7 +91,7 @@ export default function Login() {
               <line x1="12" y1="8" x2="20" y2="16"/>
             </svg>
           </div>
-          <h1 className="text-2xl font-bold text-white">GitVisual</h1>
+          <h1 className="text-2xl font-bold text-white">Visual Git</h1>
           <p className="text-slate-500 text-sm mt-1">Cliente Git visual con integración GitHub</p>
         </div>
 

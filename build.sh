@@ -1,8 +1,8 @@
 #!/bin/bash
 
-# Este script genera un build de producción (DMG y archivo .app) de GitVisual para Mac.
+# Este script genera un build de producción (DMG y archivo .app) de Visual Git para Mac.
 
-echo "🦈🌊 Preparando el build de GitVisual para macOS..."
+echo "🦈🌊 Preparando el build de Visual Git para macOS..."
 
 # Aseguramos que todas las dependencias estén instaladas
 echo "📦 Instalando dependencias..."

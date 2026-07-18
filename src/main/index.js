@@ -169,7 +169,7 @@ function startOAuthCallbackServer() {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
     res.end(`<!DOCTYPE html>
 <html lang="es">
-<head><meta charset="UTF-8"><title>GitVisual — Auth</title>
+<head><meta charset="UTF-8"><title>Visual Git — Auth</title>
 <style>
   body{margin:0;height:100vh;display:flex;align-items:center;justify-content:center;
        background:#1b1e2e;color:#d1d5e0;font-family:'Inter',-apple-system,sans-serif}
@@ -183,7 +183,7 @@ function startOAuthCallbackServer() {
   <div class="card">
     <div class="icon">${err ? '❌' : '✅'}</div>
     <h2>${err ? 'Error de autenticación' : '¡Autenticado correctamente!'}</h2>
-    <p>${err ? err : 'Puedes cerrar esta pestaña y volver a GitVisual.'}</p>
+    <p>${err ? err : 'Puedes cerrar esta pestaña y volver a Visual Git.'}</p>
   </div>
 </body></html>`)
 

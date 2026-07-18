@@ -19,7 +19,7 @@ async function createRepository(root, name) {
   await git(repository, 'init', '--initial-branch=main')
   await git(repository, 'config', 'user.name', 'Playwright')
   await git(repository, 'config', 'user.email', 'playwright@example.test')
-  await writeFile(join(repository, 'README.md'), '# GitVisual E2E\n')
+  await writeFile(join(repository, 'README.md'), '# Visual Git E2E\n')
   await git(repository, 'add', 'README.md')
   await git(repository, 'commit', '-m', 'chore: initial commit')
   await git(root, 'init', '--bare', remoteRepository)
@@ -60,7 +60,7 @@ async function isAncestor(repository, ancestor, descendant) {
 
 const test = base.extend({
   workspace: async ({}, use) => {
-    const root = await mkdtemp(join(tmpdir(), 'gitvisual-e2e-'))
+    const root = await mkdtemp(join(tmpdir(), 'visual-git-e2e-'))
     const primaryRepository = await createRepository(root, 'alpha-repository')
     const secondaryRepository = await createRepository(root, 'beta-repository')
 
@@ -92,7 +92,7 @@ const test = base.extend({
 
   page: async ({ app }, use) => {
     const page = await app.firstWindow()
-    await expect(page.getByText('GitVisual', { exact: true })).toBeVisible()
+    await expect(page.getByText('Visual Git', { exact: true })).toBeVisible()
     await expect(page.getByRole('complementary').getByRole('button', { name: /alpha-repository/ })).toBeVisible()
     await use(page)
   }

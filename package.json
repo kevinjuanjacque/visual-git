@@ -1,5 +1,5 @@
 {
-  "name": "gitvisual",
+  "name": "visual-git",
   "version": "1.0.0",
   "description": "Visual Git client with GitHub integration — like GitKraken",
   "main": "out/main/index.js",
@@ -30,13 +30,13 @@
     "vite": "^5.0.0"
   },
   "build": {
-    "appId": "com.gitvisual.app",
-    "productName": "GitVisual",
+    "appId": "com.visualgit.app",
+    "productName": "Visual Git",
     "protocols": [
       {
-        "name": "gitvisual",
+        "name": "visualgit",
         "schemes": [
-          "gitvisual"
+          "visualgit"
         ]
       }
     ],

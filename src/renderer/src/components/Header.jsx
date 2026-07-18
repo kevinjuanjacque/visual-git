@@ -75,7 +75,7 @@ export default function Header({
           <line x1="12" y1="8" x2="4"  y2="16"/>
           <line x1="12" y1="8" x2="20" y2="16"/>
         </svg>
-        GitVisual
+        Visual Git
       </div>
 
       {repoName && (

@@ -2,7 +2,7 @@
 
 ## Application overview
 
-GitVisual renders local Git repositories in Electron. The E2E suite launches the compiled
+Visual Git renders local Git repositories in Electron. The E2E suite launches the compiled
 application with a fictitious local user and temporary repositories, so it exercises the IPC
 layer and the UI without credentials, network access, or a developer's repositories.
 
