@@ -13,6 +13,7 @@ import { classifyGitError } from './utils/gitErrors'
 
 export default function App() {
   const [user,           setUser]           = useState(null)
+  const [accounts,       setAccounts]       = useState([])
   const [loadingAuth,    setLoadingAuth]     = useState(true)
   const [currentRepo,    setCurrentRepo]     = useState(null)
   const [repos,          setRepos]           = useState([])
@@ -21,6 +22,7 @@ export default function App() {
   const [pinnedBranches, setPinnedBranches] = useState([])
   const [promptConfig,   setPromptConfig]   = useState(null)
   const [selectedDiffFile, setSelectedDiffFile] = useState(null)
+  const [accountAuthorization, setAccountAuthorization] = useState(null)
 
   const showPrompt = useCallback((title) => {
     return new Promise((resolve) => {
@@ -90,19 +92,26 @@ export default function App() {
   // ── Bootstrap: check stored session ────────────────────────────────────────
   useEffect(() => {
     async function init() {
-      const [storedUser, storedRepos] = await Promise.all([
+      const [storedUser, storedAccounts, storedRepos] = await Promise.all([
         window.electronAPI.getUser(),
+        window.electronAPI.getAccounts(),
         window.electronAPI.getRepos()
       ])
       setUser(storedUser)
+      setAccounts(storedAccounts)
       setRepos(storedRepos)
       if (storedRepos.length > 0) setCurrentRepo(storedRepos[0])
       setLoadingAuth(false)
     }
     init()
 
-    const offSuccess = window.electronAPI.onAuthSuccess(u => { setUser(u) })
+    const offSuccess = window.electronAPI.onAuthSuccess(async u => {
+      setUser(u)
+      setAccounts(await window.electronAPI.getAccounts())
+      setAccountAuthorization(null)
+    })
     const offError   = window.electronAPI.onAuthError(e  => {
+      setAccountAuthorization(null)
       pushError(classifyGitError(`authentication failed: ${e}`, 'auth'))
     })
 
@@ -143,7 +152,32 @@ export default function App() {
     if (currentRepo === path) { setCurrentRepo(updated[0] ?? null); setSelectedCommit(null) }
   }
 
-  async function handleLogout() { await window.electronAPI.logout(); setUser(null) }
+  async function handleLogout() {
+    const result = await window.electronAPI.logout()
+    setUser(result?.user ?? null)
+    setAccounts(result?.accounts ?? [])
+  }
+
+  async function handleSelectAccount(login) {
+    const result = await window.electronAPI.selectAccount(login)
+    if (!result?.ok) {
+      pushError(classifyGitError(result?.error || 'No se pudo cambiar de cuenta.', 'auth'))
+      return
+    }
+
+    setUser(result.user)
+    setAccounts(result.accounts)
+  }
+
+  async function handleAddAccount() {
+    const result = await window.electronAPI.login()
+    if (!result?.ok) {
+      pushError(classifyGitError(result?.error || 'No se pudo iniciar la autorización con GitHub.', 'auth'))
+      return
+    }
+
+    setAccountAuthorization(result)
+  }
 
   // ── Staging actions ─────────────────────────────────────────────────────────
 
@@ -305,6 +339,9 @@ export default function App() {
         onRefresh={networkRefresh}
         onOpenRepo={handleOpenRepo}
         onLogout={handleLogout}
+        accounts={accounts}
+        onSelectAccount={handleSelectAccount}
+        onAddAccount={handleAddAccount}
         onPull={handlePull}
         onPush={handlePush}
         onStash={handleStash}
@@ -471,6 +508,38 @@ export default function App() {
           onCancel={() => { promptConfig.resolve(null); setPromptConfig(null) }} 
         />
       )}
+
+      {accountAuthorization && (
+        <AccountAuthorizationModal authorization={accountAuthorization} />
+      )}
+    </div>
+  )
+}
+
+function AccountAuthorizationModal({ authorization }) {
+  return (
+    <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 backdrop-blur-sm">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="account-authorization-title"
+        className="w-full max-w-sm px-8 py-7 bg-surface-800 rounded-2xl shadow-2xl border border-surface-700/60 text-center"
+      >
+        <svg className="animate-spin w-10 h-10 text-brand-500 mx-auto mb-4" viewBox="0 0 24 24" fill="none">
+          <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" strokeOpacity="0.2"/>
+          <path d="M12 2a10 10 0 0110 10" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+        </svg>
+        <h2 id="account-authorization-title" className="text-base font-semibold text-white">Añade otra cuenta de GitHub</h2>
+        <p className="mt-2 text-[12px] leading-relaxed text-slate-400">
+          Autoriza Visual Git en tu navegador e ingresa este código:
+        </p>
+        <code className="block mt-5 py-3 px-4 bg-surface-900 border border-brand-500/40 rounded-lg text-xl tracking-[0.22em] font-semibold text-brand-300">
+          {authorization.userCode}
+        </code>
+        <p className="mt-3 text-[11px] text-slate-600">
+          El código vence en {Math.ceil(authorization.expiresIn / 60)} minutos.
+        </p>
+      </div>
     </div>
   )
 }

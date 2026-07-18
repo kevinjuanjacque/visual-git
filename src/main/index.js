@@ -24,6 +24,68 @@ const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID || 'Iv23liAyb9iXNzX2vBne'
 const GITHUB_OAUTH_BASE_URL = process.env.GITHUB_OAUTH_BASE_URL || 'https://github.com'
 const GITHUB_API_BASE_URL = process.env.GITHUB_API_BASE_URL || 'https://api.github.com'
 
+function getStoredGitHubAccounts() {
+  const accounts = store.get('githubAccounts', [])
+  return Array.isArray(accounts) ? accounts.filter(account => account?.user?.login && account.token) : []
+}
+
+function getCommitAuthor(user) {
+  const login = user.login.trim()
+  const name = typeof user.name === 'string' && user.name.trim() ? user.name.trim() : login
+  const email = typeof user.email === 'string' && user.email.trim()
+    ? user.email.trim()
+    : user.id
+      ? `${user.id}+${login}@users.noreply.github.com`
+      : `${login}@users.noreply.github.com`
+
+  return { name, email }
+}
+
+function migrateLegacyGitHubAccount() {
+  const accounts = getStoredGitHubAccounts()
+  if (accounts.length > 0) return accounts
+
+  const user = store.get('githubUser', null)
+  const token = store.get('githubToken', null)
+  if (!user?.login || !token) return []
+
+  const account = { user, token, author: getCommitAuthor(user) }
+  store.set('githubAccounts', [account])
+  store.set('activeGitHubAccountLogin', user.login)
+  store.delete('githubUser')
+  store.delete('githubToken')
+  return [account]
+}
+
+function getActiveGitHubAccount() {
+  const accounts = migrateLegacyGitHubAccount()
+  if (accounts.length === 0) return null
+
+  const activeLogin = store.get('activeGitHubAccountLogin', null)
+  const activeAccount = accounts.find(account => account.user.login === activeLogin)
+  if (activeAccount) return activeAccount
+
+  store.set('activeGitHubAccountLogin', accounts[0].user.login)
+  return accounts[0]
+}
+
+function getPublicGitHubAccounts() {
+  return migrateLegacyGitHubAccount().map(({ user, author }) => ({ user, author }))
+}
+
+function saveGitHubAccount(token, user) {
+  const account = { user, token, author: getCommitAuthor(user) }
+  const accounts = migrateLegacyGitHubAccount()
+  const nextAccounts = [
+    ...accounts.filter(existing => existing.user.login !== user.login),
+    account
+  ]
+
+  store.set('githubAccounts', nextAccounts)
+  store.set('activeGitHubAccountLogin', user.login)
+  return account
+}
+
 // ── Single instance ───────────────────────────────────────────────────────────
 
 if (process.env.GITVISUAL_E2E_STORE) {
@@ -84,7 +146,15 @@ app.whenReady().then(() => {
       const repos = JSON.parse(process.env.GITVISUAL_E2E_REPOS || '[]')
       if (!Array.isArray(repos)) throw new Error('GITVISUAL_E2E_REPOS debe ser un arreglo JSON')
 
-      store.set('githubUser', { login: 'playwright', avatar_url: '' })
+      if (process.env.GITVISUAL_E2E_SKIP_AUTH !== '1') {
+        saveGitHubAccount('playwright-e2e-token', {
+          id: 1,
+          login: 'playwright',
+          name: 'Playwright',
+          email: 'playwright@example.test',
+          avatar_url: ''
+        })
+      }
       store.set('repositories', repos)
     } catch (err) {
       throw new Error(`No se pudo inicializar el entorno E2E: ${err.message}`)
@@ -103,14 +173,23 @@ ipcMain.handle('auth:getCredentials', () => ({
   fromEnv: true
 }))
 
-ipcMain.handle('auth:getUser',  () => store.get('githubUser', null))
-ipcMain.handle('auth:getToken', () => store.get('githubToken', null))
+ipcMain.handle('auth:getUser', () => getActiveGitHubAccount()?.user ?? null)
+ipcMain.handle('auth:getToken', () => getActiveGitHubAccount()?.token ?? null)
+ipcMain.handle('auth:getAccounts', () => getPublicGitHubAccounts())
+ipcMain.handle('auth:selectAccount', (_event, login) => {
+  const account = migrateLegacyGitHubAccount().find(candidate => candidate.user.login === login)
+  if (!account) return { ok: false, error: 'La cuenta seleccionada ya no está disponible.' }
+
+  store.set('activeGitHubAccountLogin', account.user.login)
+  return { ok: true, user: account.user, accounts: getPublicGitHubAccounts() }
+})
 
 // Diagnóstico: devuelve el estado interno para mostrar en la UI
 ipcMain.handle('auth:diagnose', () => ({
   hasClientId:     !!GITHUB_CLIENT_ID,
-  hasToken:        !!store.get('githubToken'),
-  hasUser:         !!store.get('githubUser'),
+  hasToken:        !!getActiveGitHubAccount()?.token,
+  hasUser:         !!getActiveGitHubAccount()?.user,
+  accountCount:    getPublicGitHubAccounts().length,
   flow:             'device'
 }))
 
@@ -144,8 +223,21 @@ ipcMain.handle('auth:login', async () => {
 })
 
 ipcMain.handle('auth:logout', () => {
-  store.delete('githubToken')
-  store.delete('githubUser')
+  const activeAccount = getActiveGitHubAccount()
+  if (!activeAccount) return { user: null, accounts: [] }
+
+  const remainingAccounts = migrateLegacyGitHubAccount()
+    .filter(account => account.user.login !== activeAccount.user.login)
+  store.set('githubAccounts', remainingAccounts)
+
+  const nextAccount = remainingAccounts[0] ?? null
+  if (nextAccount) store.set('activeGitHubAccountLogin', nextAccount.user.login)
+  else store.delete('activeGitHubAccountLogin')
+
+  return {
+    user: nextAccount?.user ?? null,
+    accounts: getPublicGitHubAccounts()
+  }
 })
 
 async function pollDeviceAuthorization(authorization) {
@@ -195,8 +287,7 @@ async function completeGitHubLogin(token) {
     }
   })
 
-  store.set('githubToken', token)
-  store.set('githubUser', userRes.data)
+  saveGitHubAccount(token, userRes.data)
 
   if (mainWindow) {
     mainWindow.show()
@@ -533,9 +624,14 @@ ipcMain.handle('git:discardFile', async (_e, { folderPath, file }) => {
 ipcMain.handle('git:commit', async (_e, { folderPath, summary, description }) => {
   try {
     const git = simpleGit(folderPath)
+    const account = getActiveGitHubAccount()
+    if (!account) throw new Error('Selecciona una cuenta de GitHub antes de crear un commit.')
+
     const msg = description ? `${summary}\n\n${description}` : summary
+    await git.raw(['config', '--local', 'user.name', account.author.name])
+    await git.raw(['config', '--local', 'user.email', account.author.email])
     await git.commit(msg)
-    return { ok: true }
+    return { ok: true, author: account.author }
   } catch (err) {
     return { ok: false, error: err.message }
   }

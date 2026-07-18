@@ -4,6 +4,7 @@ import { formatDistanceToNow } from '../utils/time'
 export default function Header({
   user, repoPath, loading, lastRefresh, nextRefresh,
   hasWip, onRefresh, onOpenRepo, onLogout,
+  accounts = [], onSelectAccount, onAddAccount,
   onPull, onPush, onStash, onNewBranch,
   onOpenInVSCode, onOpenInGitHub
 }) {
@@ -11,6 +12,7 @@ export default function Header({
   const [busy,        setBusy]        = useState('')   // 'pull' | 'push' | 'stash' | ''
   const [showBranch,  setShowBranch]  = useState(false)
   const [branchName,  setBranchName]  = useState('')
+  const [showAccounts, setShowAccounts] = useState(false)
   const branchInputRef = useRef(null)
 
   useEffect(() => {
@@ -59,6 +61,16 @@ export default function Header({
     setBranchName('')
     setShowBranch(false)
     setBusy('')
+  }
+
+  async function handleSelectAccount(login) {
+    await onSelectAccount?.(login)
+    setShowAccounts(false)
+  }
+
+  async function handleAddAccount() {
+    setShowAccounts(false)
+    await onAddAccount?.()
   }
 
   return (
@@ -236,10 +248,63 @@ export default function Header({
         )}
 
         {user && (
-          <div className="flex items-center gap-2">
-            <img src={user.avatar_url} alt={user.login} className="w-6 h-6 rounded-full ring-1 ring-surface-700" />
-            <span className="text-[11px] text-slate-400">{user.login}</span>
-            <button onClick={onLogout} className="text-[11px] text-slate-500 hover:text-red-400 transition-colors px-1" title="Cerrar sesión">×</button>
+          <div className="relative">
+            <button
+              onClick={() => setShowAccounts(open => !open)}
+              aria-label="Cambiar cuenta de GitHub"
+              aria-expanded={showAccounts}
+              className="flex items-center gap-2 rounded-md px-2 py-1 hover:bg-surface-800 transition-colors"
+              title="Cuenta seleccionada para los próximos commits"
+            >
+              <img src={user.avatar_url} alt="" className="w-6 h-6 rounded-full ring-1 ring-surface-700" />
+              <span className="text-[11px] text-slate-400">{user.login}</span>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-slate-500">
+                <polyline points="6 9 12 15 18 9"/>
+              </svg>
+            </button>
+
+            {showAccounts && (
+              <div role="menu" className="absolute right-0 top-full mt-2 z-50 w-64 rounded-lg border border-surface-600 bg-surface-800 p-1.5 shadow-2xl">
+                <p className="px-2 py-1.5 text-[10px] font-medium uppercase tracking-wider text-slate-500">
+                  Cuenta para los próximos commits
+                </p>
+                {accounts.map(account => {
+                  const isActive = account.user.login === user.login
+                  return (
+                    <button
+                      key={account.user.login}
+                      role="menuitem"
+                      onClick={() => handleSelectAccount(account.user.login)}
+                      className={`flex w-full items-center gap-2 rounded-md px-2 py-2 text-left transition-colors ${
+                        isActive ? 'bg-brand-500/15 text-brand-200' : 'text-slate-300 hover:bg-surface-700'
+                      }`}
+                    >
+                      <img src={account.user.avatar_url} alt="" className="h-6 w-6 rounded-full bg-surface-700" />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[11px] font-medium">{account.user.login}</span>
+                        <span className="block truncate text-[10px] text-slate-500">{account.author.email}</span>
+                      </span>
+                      {isActive && <span className="text-xs" aria-label="Cuenta activa">✓</span>}
+                    </button>
+                  )
+                })}
+                <div className="my-1 border-t border-surface-700/70" />
+                <button
+                  role="menuitem"
+                  onClick={handleAddAccount}
+                  className="w-full rounded-md px-2 py-2 text-left text-[11px] font-medium text-brand-300 hover:bg-surface-700"
+                >
+                  + Añadir cuenta de GitHub
+                </button>
+                <button
+                  role="menuitem"
+                  onClick={() => { setShowAccounts(false); onLogout?.() }}
+                  className="w-full rounded-md px-2 py-2 text-left text-[11px] text-red-400 hover:bg-surface-700"
+                >
+                  Quitar cuenta actual
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>

@@ -59,7 +59,19 @@ async function isAncestor(repository, ancestor, descendant) {
   }
 }
 
-async function createDeviceFlowServer() {
+async function createDeviceFlowServer(accounts = [{
+  token: 'device-flow-test-token',
+  user: {
+    id: 100,
+    login: 'device-flow-user',
+    name: 'Device Flow User',
+    email: 'device-flow-user@example.test',
+    avatar_url: ''
+  }
+}]) {
+  let authorizationCount = 0
+  let tokenRequestCount = 0
+
   const server = createServer((request, response) => {
     const sendJson = body => {
       response.writeHead(200, { 'Content-Type': 'application/json' })
@@ -67,9 +79,10 @@ async function createDeviceFlowServer() {
     }
 
     if (request.url === '/login/device/code') {
+      const accountIndex = Math.min(authorizationCount++, accounts.length - 1)
       sendJson({
-        device_code: 'device-code-for-test',
-        user_code: 'ABCD-EFGH',
+        device_code: `device-code-for-test-${accountIndex}`,
+        user_code: accountIndex === 0 ? 'ABCD-EFGH' : 'IJKL-MNOP',
         verification_uri: 'https://github.com/login/device',
         expires_in: 900,
         interval: 1
@@ -77,11 +90,13 @@ async function createDeviceFlowServer() {
       return
     }
     if (request.url === '/login/oauth/access_token') {
-      sendJson({ access_token: 'device-flow-test-token' })
+      const account = accounts[Math.min(tokenRequestCount++, accounts.length - 1)]
+      sendJson({ access_token: account.token })
       return
     }
     if (request.url === '/user') {
-      sendJson({ login: 'device-flow-user', avatar_url: '' })
+      const account = accounts.find(candidate => request.headers.authorization === `Bearer ${candidate.token}`)
+      sendJson(account?.user ?? accounts[0].user)
       return
     }
 
@@ -234,6 +249,81 @@ test('authenticates using GitHub Device Flow', async () => {
     await page.getByRole('button', { name: 'Iniciar sesión con GitHub' }).click()
     await expect(page.getByText('ABCD-EFGH', { exact: true })).toBeVisible()
     await expect(page.getByText('device-flow-user', { exact: true })).toBeVisible({ timeout: 10_000 })
+  } finally {
+    await app.close()
+    await mockGitHub.close()
+    await rm(storePath, { recursive: true, force: true })
+  }
+})
+
+test('switches GitHub accounts and commits with the selected author', async ({ workspace }) => {
+  const mockGitHub = await createDeviceFlowServer([
+    {
+      token: 'first-account-token',
+      user: {
+        id: 101,
+        login: 'first-account',
+        name: 'First Account',
+        email: 'first-account@example.test',
+        avatar_url: ''
+      }
+    },
+    {
+      token: 'second-account-token',
+      user: {
+        id: 102,
+        login: 'second-account',
+        name: 'Second Account',
+        email: 'second-account@example.test',
+        avatar_url: ''
+      }
+    }
+  ])
+  const storePath = await mkdtemp(join(tmpdir(), 'visual-git-accounts-e2e-'))
+  const app = await electron.launch({
+    args: ['.'],
+    env: {
+      ...process.env,
+      GITHUB_OAUTH_BASE_URL: mockGitHub.url,
+      GITHUB_API_BASE_URL: mockGitHub.url,
+      GITVISUAL_E2E: '1',
+      GITVISUAL_E2E_SKIP_AUTH: '1',
+      GITVISUAL_E2E_REPOS: JSON.stringify([workspace.primaryRepository]),
+      GITVISUAL_E2E_STORE: storePath,
+      GITVISUAL_TEST_DISABLE_OPEN_EXTERNAL: '1'
+    }
+  })
+
+  try {
+    const page = await app.firstWindow()
+    await page.getByRole('button', { name: 'Iniciar sesión con GitHub' }).click()
+    await expect(page.getByText('ABCD-EFGH', { exact: true })).toBeVisible()
+    await expect(page.getByText('first-account', { exact: true })).toBeVisible({ timeout: 10_000 })
+
+    await page.getByRole('button', { name: 'Cambiar cuenta de GitHub' }).click()
+    await page.getByRole('menuitem', { name: /Añadir cuenta de GitHub/ }).click()
+    await expect(page.getByText('IJKL-MNOP', { exact: true })).toBeVisible()
+    await expect(page.getByText('second-account', { exact: true })).toBeVisible({ timeout: 10_000 })
+
+    await page.getByRole('button', { name: 'Cambiar cuenta de GitHub' }).click()
+    await page.getByRole('menuitem', { name: /first-account/ }).click()
+    await expect(page.getByRole('button', { name: 'Cambiar cuenta de GitHub' })).toContainText('first-account')
+
+    await page.getByRole('button', { name: 'Cambiar cuenta de GitHub' }).click()
+    await page.getByRole('menuitem', { name: /second-account/ }).click()
+
+    await writeFile(join(workspace.primaryRepository, 'selected-account.txt'), 'commit with selected account\n')
+    const wipCommit = page.getByText(/\/\/ WIP/)
+    await expect(wipCommit).toBeVisible({ timeout: 10_000 })
+    await wipCommit.first().click()
+    await page.getByRole('button', { name: 'Stage All' }).click()
+    await page.getByLabel('Asunto del commit').fill('commit with selected account')
+    await page.getByRole('button', { name: 'Commit' }).click()
+
+    await expect.poll(async () => {
+      const { stdout } = await git(workspace.primaryRepository, 'log', '-1', '--format=%an|%ae')
+      return stdout.trim()
+    }).toBe('Second Account|second-account@example.test')
   } finally {
     await app.close()
     await mockGitHub.close()

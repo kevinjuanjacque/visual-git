@@ -5,6 +5,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getCredentials: ()              => ipcRenderer.invoke('auth:getCredentials'),
   getUser:        ()              => ipcRenderer.invoke('auth:getUser'),
   getToken:       ()              => ipcRenderer.invoke('auth:getToken'),
+  getAccounts:    ()              => ipcRenderer.invoke('auth:getAccounts'),
+  selectAccount:  (login)         => ipcRenderer.invoke('auth:selectAccount', login),
   diagnose:       ()              => ipcRenderer.invoke('auth:diagnose'),
   login:          ()              => ipcRenderer.invoke('auth:login'),
   logout:         ()              => ipcRenderer.invoke('auth:logout'),
